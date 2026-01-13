@@ -1,0 +1,7 @@
+
+apiVersion: v2
+name: analytics-service
+description: Team 4 Analytics Service
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
