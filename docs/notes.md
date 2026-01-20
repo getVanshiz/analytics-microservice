@@ -38,7 +38,7 @@ kubectl -n team4 delete secret sh.helm.release.v1.analytics-service.v5
 
 # kafka
 ## Producer
-kubectl apply -f manifests/all-topics-producer.yaml
+kubectl apply -f manifests/all-topic-producer.yaml
 kubectl logs deploy/all-topics-producer -n team4 -f
 
 # scale them down
