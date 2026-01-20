@@ -1,9 +1,8 @@
 
-# values.yaml
 image:
   repository: analytics-service
   tag: "v2"
-  pullPolicy: Never  # rancher desktop local builds
+  pullPolicy: Never
 
 replicaCount: 1
 
@@ -11,32 +10,38 @@ service:
   port: 8080
   name: http
 
-# Inject Kafka bootstrap into the container (use in your code if you want)
-
-
 env:
   - name: KAFKA_BOOTSTRAP
     value: "team4-kafka-kafka-bootstrap.team4.svc:9092"
+
+  # Enable publishing analytics events to Kafka
   - name: ENABLE_ANALYTICS_TOPIC
-    value: "false"
+    value: "true"
+
+  # Team‑4 consumes ALL events from Teams 1/2/3
+  - name: INPUT_TOPICS
+    value: "user-events,order-events,notification-events"
+
+  # Your internal analytics event topic
+  - name: ANALYTICS_TOPIC
+    value: "analytics-events"
+
+  - name: CONSUMER_GROUP
+    value: "observability-group-v2"   # pick any new suffix
 
 
-# Add Prometheus scrape annotations (optional when using ServiceMonitor, but harmless)
 podAnnotations:
   prometheus.io/scrape: "true"
   prometheus.io/path: "/metrics"
   prometheus.io/port: "8080"
 
-# Resources (optional)
 resources: {}
 
-# ServiceMonitor config (Prometheus Operator)
 serviceMonitor:
   enabled: true
   interval: 30s
   scrapePath: /metrics
   labels:
-    release: kube-prometheus-stack   # must match your Prometheus Helm release label
+    release: kube-prometheus-stack
 
-# Extra labels (optional)
 labels: {}

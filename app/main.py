@@ -1,10 +1,9 @@
 
-# main.py
 from flask import Flask, jsonify
 import time, os, threading
 from prometheus_flask_exporter import PrometheusMetrics
 
-from consumer.consumer import start_consumer  # import should work now
+from consumer.consumer import start_consumer 
 
 app = Flask(__name__)
 start_time = time.time()

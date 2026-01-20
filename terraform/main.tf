@@ -53,7 +53,7 @@ module "kafka_topic_user_events" {
   namespace = module.namespace.name
   cluster   = local.kafka_cluster
   name      = "user-events"            # <-- FIXED
-  topicName = "user_events"            # <-- real Kafka topic name
+  topicName = "user-events"            # <-- real Kafka topic name
   depends_on = [module.kafka]
 }
 
@@ -62,7 +62,7 @@ module "kafka_topic_order_events" {
   namespace = module.namespace.name
   cluster   = local.kafka_cluster
   name      = "order-events"
-  topicName = "order_events"
+  topicName = "order-events"
   depends_on = [module.kafka]
 }
 
@@ -71,7 +71,17 @@ module "kafka_topic_notification_events" {
   namespace = module.namespace.name
   cluster   = local.kafka_cluster
   name      = "notification-events"
-  topicName = "notification_events"
+  topicName = "notification-events"
+  depends_on = [module.kafka]
+}
+
+
+module "kafka_topic_analytics_events" {
+  source    = "./modules/kafka-topic"
+  namespace = module.namespace.name
+  cluster   = local.kafka_cluster
+  name      = "analytics-events"
+  topicName = "analytics-events"
   depends_on = [module.kafka]
 }
 
@@ -108,7 +118,7 @@ module "analytics_service" {
   values = {
     image = {
       repository = "analytics-service"
-      tag        = "v5"        # ✅ NEW TAG
+      tag        = "v9"        # ✅ NEW TAG
       pullPolicy = "Never"
     }
     replicaCount = 1
