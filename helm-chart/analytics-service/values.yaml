@@ -1,10 +1,42 @@
+
+# values.yaml
 image:
   repository: analytics-service
-  tag: "latest"
-  pullPolicy: Never
+  tag: "v2"
+  pullPolicy: Never  # rancher desktop local builds
 
 replicaCount: 1
+
 service:
   port: 8080
+  name: http
 
-resources: {}  
+# Inject Kafka bootstrap into the container (use in your code if you want)
+
+
+env:
+  - name: KAFKA_BOOTSTRAP
+    value: "team4-kafka-kafka-bootstrap.team4.svc:9092"
+  - name: ENABLE_ANALYTICS_TOPIC
+    value: "false"
+
+
+# Add Prometheus scrape annotations (optional when using ServiceMonitor, but harmless)
+podAnnotations:
+  prometheus.io/scrape: "true"
+  prometheus.io/path: "/metrics"
+  prometheus.io/port: "8080"
+
+# Resources (optional)
+resources: {}
+
+# ServiceMonitor config (Prometheus Operator)
+serviceMonitor:
+  enabled: true
+  interval: 30s
+  scrapePath: /metrics
+  labels:
+    release: kube-prometheus-stack   # must match your Prometheus Helm release label
+
+# Extra labels (optional)
+labels: {}

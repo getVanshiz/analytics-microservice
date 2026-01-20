@@ -1,46 +1,88 @@
 
-terraform {
-  required_version = ">= 1.5.0"
-  required_providers {
-    kubernetes = {
-      source  = "hashicorp/kubernetes"
-      version = ">= 2.25.0"
-    }
-    helm = {
-      source  = "hashicorp/helm"
-      version = ">= 2.10.1"
-    }
+locals {
+  namespace     = "team4"
+  kafka_cluster = "team4-kafka"
+}
+
+
+# Create dedicated namespace for Strimzi operator
+resource "kubernetes_namespace_v1" "strimzi" {
+  metadata {
+    name = "strimzi"
   }
 }
 
-# Kubernetes provider
-provider "kubernetes" {
-  config_path    = "~/.kube/config"
-  config_context = "rancher-desktop"
+
+# Namespace
+module "namespace" {
+  source = "./modules/namespace"
+  name   = local.namespace
 }
 
-# Helm provider - use ARGUMENT (map) form for kubernetes auth
-provider "helm" {
-  kubernetes = {
-    config_path    = "~/.kube/config"
-    config_context = "rancher-desktop"
+
+
+
+module "strimzi_operator" {
+  source        = "./modules/strimzi-operator"
+  namespace     = kubernetes_namespace_v1.strimzi.metadata[0].name
+  chart_version = "0.49.1"
+
+  values = {
+    watchNamespaces = ["team4"]
   }
+
+  depends_on = [kubernetes_namespace_v1.strimzi]
 }
 
-# Namespace: use v1 resource
-resource "kubernetes_namespace_v1" "team4" {
-  metadata { name = "team4" }
+
+
+
+
+# Kafka CRs (KRaft, single-broker)
+module "kafka" {
+  source    = "./modules/kafka"
+  namespace = module.namespace.name
+  cluster   = local.kafka_cluster
+  depends_on = [module.strimzi_operator]
 }
 
-# --- InfluxDB v2 via official Helm chart ---
-resource "helm_release" "influxdb2" {
-  name             = "influxdb2"
-  repository       = "https://helm.influxdata.com"
-  chart            = "influxdb2"
-  namespace        = kubernetes_namespace_v1.team4.metadata[0].name
-  create_namespace = false
+# Kafka CRs (KRaft, single-broker)
 
-  values = [yamlencode({
+module "kafka_topic_user_events" {
+  source    = "./modules/kafka-topic"
+  namespace = module.namespace.name
+  cluster   = local.kafka_cluster
+  name      = "user-events"            # <-- FIXED
+  topicName = "user_events"            # <-- real Kafka topic name
+  depends_on = [module.kafka]
+}
+
+module "kafka_topic_order_events" {
+  source    = "./modules/kafka-topic"
+  namespace = module.namespace.name
+  cluster   = local.kafka_cluster
+  name      = "order-events"
+  topicName = "order_events"
+  depends_on = [module.kafka]
+}
+
+module "kafka_topic_notification_events" {
+  source    = "./modules/kafka-topic"
+  namespace = module.namespace.name
+  cluster   = local.kafka_cluster
+  name      = "notification-events"
+  topicName = "notification_events"
+  depends_on = [module.kafka]
+}
+
+
+# InfluxDB v2 (Helm)
+module "influxdb2" {
+  source    = "./modules/influxdb2"
+  namespace = module.namespace.name
+  name      = "influxdb2"
+
+  values = {
     persistence = { enabled = false } # ephemeral for dev
     adminUser = {
       user         = "admin"
@@ -50,63 +92,210 @@ resource "helm_release" "influxdb2" {
       bucket       = "team4-bucket"
     }
     service = { type = "ClusterIP" }
-  })]
+  }
+
+  depends_on = [module.namespace]
 }
 
-# --- Strimzi Cluster Operator via Helm (OCI) ---
-resource "helm_release" "strimzi_operator" {
-  name             = "strimzi-operator"
-  repository       = "oci://quay.io/strimzi-helm"
-  chart            = "strimzi-kafka-operator"
-  version          = "0.49.1"
-  namespace        = kubernetes_namespace_v1.team4.metadata[0].name
-  create_namespace = false
-}
+# Analytics service (local Helm chart)
+module "analytics_service" {
+  source     = "./modules/analytics-service"
+  namespace  = module.namespace.name
+  name       = "analytics-service"
+  chart_path = "${path.module}/../helm-chart/analytics-service"
 
-# --- Single-broker Kafka (KRaft) using Strimzi CRs ---
-resource "kubernetes_manifest" "kafka_nodepool_dualrole" {
-  manifest = yamldecode(templatefile("${path.module}/manifests/kafka-nodepool.yaml", {
-    namespace = kubernetes_namespace_v1.team4.metadata[0].name
-    cluster   = "team4-kafka"
-  }))
-  depends_on = [helm_release.strimzi_operator]
-}
-
-resource "kubernetes_manifest" "kafka_cluster" {
-  manifest = yamldecode(templatefile("${path.module}/manifests/kafka-cluster.yaml", {
-    namespace = kubernetes_namespace_v1.team4.metadata[0].name
-    cluster   = "team4-kafka"
-  }))
-  depends_on = [kubernetes_manifest.kafka_nodepool_dualrole]
-}
-
-# Optional: create one topic to validate cluster
-resource "kubernetes_manifest" "kafka_topic_analytics" {
-  manifest = yamldecode(templatefile("${path.module}/manifests/kafka-topic.yaml", {
-    namespace = kubernetes_namespace_v1.team4.metadata[0].name
-    cluster   = "team4-kafka"
-    name      = "analytics-events"
-  }))
-  depends_on = [kubernetes_manifest.kafka_cluster]
-}
-
-# --- Deploy your Analytics Service (local Helm chart) ---
-resource "helm_release" "analytics_service" {
-  name             = "analytics-service"
-  chart            = "${path.module}/../helm-chart/analytics-service"
-  namespace        = kubernetes_namespace_v1.team4.metadata[0].name
-  create_namespace = false
-  values = [yamlencode({
+  
+  values = {
     image = {
       repository = "analytics-service"
-      tag        = "latest"
-      pullPolicy = "IfNotPresent"
+      tag        = "v5"        # ✅ NEW TAG
+      pullPolicy = "Never"
     }
     replicaCount = 1
-    service = { port = 8080 }
-  })]
+    service      = { port = 8080 }
+
+    kafka = {
+      bootstrapServers = module.kafka.bootstrap_dns
+    }
+    influxdb = {
+      url      = "http://${module.influxdb2.release_name}.${module.influxdb2.namespace}.svc.cluster.local"
+      org      = "team4-org"
+      bucket   = "team4-bucket"
+      token    = "team4-dev-admin-token"
+      username = "admin"
+      password = "admin123"
+    }
+  }
+
   depends_on = [
-    helm_release.influxdb2,
-    kubernetes_manifest.kafka_cluster
+    module.influxdb2,
+    module.kafka
+  ]
+}
+
+# ---------------------------
+# (Optional) Monitoring stack
+# ---------------------------
+module "ns_monitoring" {
+  source = "./modules/namespace"
+  name   = "monitoring"
+}
+
+
+module "monitoring" {
+  source        = "./modules/monitoring"
+  namespace     = module.ns_monitoring.name
+  name          = "kube-prometheus-stack"
+  chart_version = "62.7.0"
+
+  values = {
+    # 🚫 Disable node exporter to avoid hostPort 9100 conflict on single-node clusters
+    nodeExporter = {
+      enabled = false
+    }
+
+    grafana = {
+      service       = { type = "ClusterIP" }
+      adminPassword = "admin123"
+      additionalDataSources = [
+        {
+          name   = "InfluxDB"
+          type   = "influxdb"
+          access = "proxy"
+          url    = "http://${module.influxdb2.release_name}.${module.influxdb2.namespace}.svc.cluster.local"
+          user   = "admin"
+          secureJsonData = { password = "admin123", token = "team4-dev-admin-token" }
+          jsonData = {
+            version        = "Flux"
+            organization   = "team4-org"
+            defaultBucket  = "team4-bucket"
+            tlsSkipVerify  = true
+          }
+        }
+      ]
+    }
+
+    prometheus = {
+      prometheusSpec = {
+        retention      = "5d"
+        scrapeInterval = "30s"
+      }
+    }
+
+    alertmanager = { enabled = true }
+  }
+
+  depends_on = [module.ns_monitoring]
+}
+
+
+# Example ServiceMonitor for analytics-service (if monitoring enabled)
+resource "kubernetes_manifest" "analytics_service_monitor" {
+  manifest = {
+    apiVersion = "monitoring.coreos.com/v1"
+    kind       = "ServiceMonitor"
+    metadata = {
+      name      = "analytics-service-sm"
+      namespace = module.namespace.name
+      labels = {
+        release = "kube-prometheus-stack"
+      }
+    }
+    spec = {
+      selector = {
+        matchLabels = {
+          "app.kubernetes.io/name" = "analytics-service"
+        }
+      }
+      endpoints = [
+        {
+          port     = "http"   # ensure Service has a named port "http"
+          path     = "/metrics"
+          interval = "30s"
+        }
+      ]
+      namespaceSelector = {
+        matchNames = [module.namespace.name]
+      }
+    }
+  }
+  depends_on = [module.analytics_service]
+}
+
+
+resource "kubernetes_manifest" "influxdb_sm" {
+  manifest = {
+    apiVersion = "monitoring.coreos.com/v1"
+    kind       = "ServiceMonitor"
+    metadata = {
+      name      = "influxdb2-sm"
+      namespace = module.namespace.name
+      labels = {
+        release = "kube-prometheus-stack"
+      }
+    }
+    spec = {
+      selector = {
+        matchLabels = {
+          "app.kubernetes.io/name"      = "influxdb2"
+          "app.kubernetes.io/instance"  = "influxdb2"
+        }
+      }
+      endpoints = [
+        {
+          port     = "http"
+          path     = "/metrics"
+          interval = "30s"
+        }
+      ]
+      namespaceSelector = {
+        matchNames = [module.namespace.name]
+      }
+    }
+  }
+
+  depends_on = [
+    module.influxdb2,
+    module.monitoring
+  ]
+}
+
+
+
+
+resource "kubernetes_manifest" "kafka_exporter_sm" {
+  manifest = {
+    apiVersion = "monitoring.coreos.com/v1"
+    kind       = "ServiceMonitor"
+    metadata = {
+      name      = "kafka-exporter-sm"
+      namespace = module.namespace.name
+      labels = {
+        release = "kube-prometheus-stack"
+      }
+    }
+    spec = {
+      selector = {
+        matchLabels = {
+          "strimzi.io/cluster" = local.kafka_cluster
+          "app.kubernetes.io/name" = "kafka-exporter"
+        }
+      }
+      endpoints = [
+        {
+          port     = "prometheus" # STRIMZI DEFAULT PORT
+          interval = "30s"
+          path     = "/metrics"
+        }
+      ]
+      namespaceSelector = {
+        matchNames = [module.namespace.name]
+      }
+    }
+  }
+
+  depends_on = [
+    module.kafka,
+    module.monitoring
   ]
 }

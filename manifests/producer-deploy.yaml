@@ -1,0 +1,47 @@
+
+# manifests/producer-deploy.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: order-producer
+  namespace: team4
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: order-producer
+  template:
+    metadata:
+      labels:
+        app: order-producer
+    spec:
+      containers:
+        - name: producer
+          image: python:3.9-slim
+          command: ["bash", "-lc"]
+          args:
+            - |
+              pip install --no-cache-dir kafka-python && \
+              python - <<'PY'
+              import json, time, uuid
+              from kafka import KafkaProducer
+              TOPIC = "order-events"
+              p = KafkaProducer(
+                  bootstrap_servers=["team4-kafka-kafka-bootstrap.team4.svc:9092"],
+                  value_serializer=lambda v: json.dumps(v).encode("utf-8"),
+                  acks="all", retries=5
+              )
+              i = 0
+              while True:
+                  ev = {
+                      "event_id": str(uuid.uuid4()),
+                      "source_team": "team-2",
+                      "event-type": "ORDER_CREATED",
+                      "payload": {"order_id": str(uuid.uuid4()), "amount": 499, "currency": "INR"},
+                      "produced_at": int(time.time()*1000),
+                  }
+                  md = p.send(TOPIC, ev).get(timeout=10)
+                  i += 1
+                  print(f"[{i}] Produced to {md.topic}[{md.partition}] @ offset {md.offset}", flush=True)
+                  time.sleep(1)
+              PY

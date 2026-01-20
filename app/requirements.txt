@@ -1,1 +1,6 @@
 flask
+prometheus-flask-exporter
+gunicorn
+kafka-python
+prometheus-client
+python-dotenv
