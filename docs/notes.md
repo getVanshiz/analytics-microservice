@@ -29,7 +29,9 @@ kubectl get kafkatopics -n team4
 # create or update analytics service
 nerdctl --namespace k8s.io build -t analytics-service:v5 -f docker/Dockerfile .
 cd terraform
+change version in main.tf
 terraform apply -auto-approve
+
 kubectl -n team4 get secrets | grep analytics-service 
 kubectl -n team4 delete secret sh.helm.release.v1.analytics-service.v11
 
@@ -55,5 +57,4 @@ kubectl logs deploy/analytics-service-analytics-service -n team4 -f
 - kubectl create secret generic influxdb-auth -n team4 \
   --from-literal=token='TOKEN'
 - kubectl -n team4 rollout restart deploy/analytics-service-analytics-service
-
 - terraform apply --auto-approve
