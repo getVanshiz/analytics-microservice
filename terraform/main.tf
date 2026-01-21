@@ -98,8 +98,8 @@ module "influxdb2" {
       user         = "admin"
       password     = "admin123"
       token        = "team4-dev-admin-token"
-      organization = "team4-org"
-      bucket       = "team4-bucket"
+      organization = "team4"
+      bucket       = "analytics"
     }
     service = { type = "ClusterIP" }
   }
@@ -118,7 +118,7 @@ module "analytics_service" {
   values = {
     image = {
       repository = "analytics-service"
-      tag        = "v9"        # ✅ NEW TAG
+      tag        = "v12"        # ✅ NEW TAG
       pullPolicy = "Never"
     }
     replicaCount = 1
@@ -129,8 +129,8 @@ module "analytics_service" {
     }
     influxdb = {
       url      = "http://${module.influxdb2.release_name}.${module.influxdb2.namespace}.svc.cluster.local"
-      org      = "team4-org"
-      bucket   = "team4-bucket"
+      org      = "team4"
+      bucket   = "analytics"
       token    = "team4-dev-admin-token"
       username = "admin"
       password = "admin123"
@@ -152,6 +152,7 @@ module "ns_monitoring" {
 }
 
 
+
 module "monitoring" {
   source        = "./modules/monitoring"
   namespace     = module.ns_monitoring.name
@@ -159,27 +160,27 @@ module "monitoring" {
   chart_version = "62.7.0"
 
   values = {
-    # 🚫 Disable node exporter to avoid hostPort 9100 conflict on single-node clusters
-    nodeExporter = {
-      enabled = false
-    }
+    nodeExporter = { enabled = false }
 
     grafana = {
       service       = { type = "ClusterIP" }
       adminPassword = "admin123"
+
       additionalDataSources = [
         {
-          name   = "InfluxDB"
+          name   = "InfluxDB-Team4"
           type   = "influxdb"
           access = "proxy"
           url    = "http://${module.influxdb2.release_name}.${module.influxdb2.namespace}.svc.cluster.local"
-          user   = "admin"
-          secureJsonData = { password = "admin123", token = "team4-dev-admin-token" }
           jsonData = {
-            version        = "Flux"
-            organization   = "team4-org"
-            defaultBucket  = "team4-bucket"
+            version        = "Flux"     # Flux query language
+            organization   = "team4"    # <-- CHANGED
+            defaultBucket  = "analytics" # <-- CHANGED
+            httpHeaderName1 = "Authorization"
             tlsSkipVerify  = true
+          }
+          secureJsonData = {
+            httpHeaderValue1 = "Token team4-dev-admin-token"  # <-- Prefer using a Secret (see below)
           }
         }
       ]

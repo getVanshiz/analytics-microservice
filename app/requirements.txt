@@ -4,3 +4,4 @@ gunicorn
 kafka-python
 prometheus-client
 python-dotenv
+influxdb-client

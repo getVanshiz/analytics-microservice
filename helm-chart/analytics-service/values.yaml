@@ -14,21 +14,30 @@ env:
   - name: KAFKA_BOOTSTRAP
     value: "team4-kafka-kafka-bootstrap.team4.svc:9092"
 
-  # Enable publishing analytics events to Kafka
   - name: ENABLE_ANALYTICS_TOPIC
     value: "true"
 
-  # Team‑4 consumes ALL events from Teams 1/2/3
   - name: INPUT_TOPICS
     value: "user-events,order-events,notification-events"
 
-  # Your internal analytics event topic
   - name: ANALYTICS_TOPIC
     value: "analytics-events"
 
   - name: CONSUMER_GROUP
-    value: "observability-group-v2"   # pick any new suffix
+    value: "observability-group-v2"
 
+  # InfluxDB configuration for derived event metrics
+  - name: INFLUX_URL
+    value: "http://influxdb2.team4.svc:80"
+  - name: INFLUX_ORG
+    value: "team4"
+  - name: INFLUX_BUCKET
+    value: "analytics"
+  - name: INFLUX_TOKEN
+    valueFrom:
+      secretKeyRef:
+        name: influxdb-auth
+        key: token
 
 podAnnotations:
   prometheus.io/scrape: "true"
