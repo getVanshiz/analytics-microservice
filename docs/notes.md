@@ -31,7 +31,7 @@ nerdctl --namespace k8s.io build -t analytics-service:v5 -f docker/Dockerfile .
 cd terraform
 terraform apply -auto-approve
 kubectl -n team4 get secrets | grep analytics-service 
-kubectl -n team4 delete secret sh.helm.release.v1.analytics-service.v5
+kubectl -n team4 delete secret sh.helm.release.v1.analytics-service.v11
 
 
 ------
@@ -44,7 +44,16 @@ kubectl logs deploy/all-topics-producer -n team4 -f
 # scale them down
 kubectl get deploy -n team4
 kubectl scale deploy/all-topics-producer -n team4 --replicas=0
-kubectl -n team4 scale deploy order-producer --replicas=0
+
 
 # Consumer
 kubectl logs deploy/analytics-service-analytics-service -n team4 -f
+
+
+
+- kubectl delete secret influxdb-auth -n team4
+- kubectl create secret generic influxdb-auth -n team4 \
+  --from-literal=token='TOKEN'
+- kubectl -n team4 rollout restart deploy/analytics-service-analytics-service
+
+- terraform apply --auto-approve
