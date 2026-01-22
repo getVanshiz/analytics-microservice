@@ -1,18 +1,33 @@
-.env
-# Python virtual env
-venv/
-.env/
 
+# Python
+.venv/
+venv/
+__pycache__/
+*.pyc
+
+# Environment files
+.env
+.env.*
+!.env.example
 
 # Terraform
-.terraform/
-.terraform.lock.hcl
-*.tfstate
-*.tfstate.backup
-crash.log
-override.tf
-override.tf.json
-*_override.tf
-*_override.tf.json
+**/.terraform/                 # local providers, modules, plugins
+**/*.tfstate
+**/*.tfstate.*
+**/crash.log
+**/crash.*.log
+**/*.tfvars
+**/*.tfvars.json
+**/*_override.tf
+**/*_override.tf.json
+**/override.tf
+**/override.tf.json
+**/*.tfplan
 
+# Keep the lock file (important!)
+!**/.terraform.lock.hcl
 
+# Editor/OS
+.DS_Store
+.idea/
+.vscode/
