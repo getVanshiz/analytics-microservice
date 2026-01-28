@@ -2,6 +2,7 @@ import json
 import time
 import os
 import logging
+import uuid
 from kafka import KafkaConsumer
 
 from consumer.analytics_producer import publish_analytics
@@ -15,7 +16,7 @@ from consumer.metrics import (
     analytics_events_in_flight,
 )
 
-logging.basicConfig(level=logging.INFO)
+
 log = logging.getLogger("analytics-consumer")
 
 BOOTSTRAP = os.getenv(
@@ -40,12 +41,6 @@ ENABLE_ANALYTICS = (
 
 
 def start_consumer():
-    """
-    Kafka consumer for Analytics Service.
-    Consumes events from all upstream services and emits
-    application-level metrics for observability.
-    """
-
     # ---------- Kafka connection with retry ----------
     while True:
         try:
@@ -58,10 +53,18 @@ def start_consumer():
                 max_poll_records=500,
             )
             consumer.subscribe(INPUT_TOPICS)
-            log.info(f"Consuming from topics: {INPUT_TOPICS}")
+
+            log.info(
+                "Kafka consumer connected",
+                extra={"extra": {"topics": INPUT_TOPICS, "group": GROUP_ID}}
+            )
             break
+
         except Exception as e:
-            log.error(f"Kafka connection failed: {e}. Retrying in 2s...")
+            log.error(
+                "Kafka connection failed, retrying",
+                extra={"extra": {"bootstrap": BOOTSTRAP}}
+            )
             time.sleep(2)
 
     # ---------- Main consume loop ----------
@@ -73,71 +76,78 @@ def start_consumer():
 
             for _, messages in records.items():
                 for message in messages:
-
                     analytics_events_in_flight.inc()
                     start_time = time.time()
 
-                    try:
-                        topic = message.topic
-                        value = message.value or {}
+                    value = message.value or {}
+                    topic = message.topic
+                    trace_id = value.get("trace_id", str(uuid.uuid4()))
 
-                        # -------- Event validation --------
-                        if (
-                            "event_type" not in value
-                            or "source_team" not in value
-                        ):
+                    try:
+                        # -------- Validation --------
+                        if "event_type" not in value or "source_team" not in value:
                             analytics_event_validation_failures_total.inc()
-                            raise ValueError("Invalid event schema")
+                            log.error(
+                                "Invalid event schema",
+                                extra={
+                                    "trace_id": trace_id,
+                                    "extra": {"topic": topic, "event": value}
+                                }
+                            )
+                            continue
 
                         produced_at = int(
-                            value.get(
-                                "produced_at",
-                                int(time.time() * 1000)
-                            )
+                            value.get("produced_at", int(time.time() * 1000))
                         )
                         consumed_at = int(time.time() * 1000)
                         latency_ms = max(0, consumed_at - produced_at)
 
-                        # -------- Business metrics --------
-                        analytics_events_consumed_total.labels(
-                            topic=topic
-                        ).inc()
+                        analytics_events_consumed_total.labels(topic=topic).inc()
 
                         analytics_event_processing_latency_ms.labels(
                             topic=topic
                         ).observe((time.time() - start_time) * 1000)
 
-                        # -------- Persist to InfluxDB --------
                         write_event_ingest(
                             topic=topic,
                             event_type=value.get("event_type"),
                             source_team=value.get("source_team"),
                             latency_ms=latency_ms,
-                            lag=0,  # Kafka lag handled by Kafka Exporter
+                            lag=0,
                             ts_ms=consumed_at,
                         )
 
-                        # -------- Optional analytics publish --------
                         if ENABLE_ANALYTICS:
                             publish_analytics(
                                 topic=topic,
                                 lag=0,
                                 latency=latency_ms,
+                                trace_id=trace_id,
                             )
                             analytics_events_published_total.inc()
 
                         log.info(
-                            f"[{topic}] type={value.get('event_type')} "
-                            f"latency={latency_ms}ms"
+                            "Event processed",
+                            extra={
+                                "trace_id": trace_id,
+                                "extra": {
+                                    "topic": topic,
+                                    "event_type": value.get("event_type"),
+                                    "latency_ms": latency_ms
+                                }
+                            }
                         )
 
-                    except Exception as e:
+                    except Exception:
                         analytics_processing_errors_total.inc()
-                        log.exception(f"Error processing message: {e}")
+                        log.exception(
+                            "Error processing message",
+                            extra={"trace_id": trace_id}
+                        )
 
                     finally:
                         analytics_events_in_flight.dec()
 
-        except Exception as e:
-            log.exception(f"Consumer loop error: {e}")
+        except Exception:
+            log.exception("Consumer loop error")
             time.sleep(1)

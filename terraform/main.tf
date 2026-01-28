@@ -118,7 +118,7 @@ module "analytics_service" {
   values = {
     image = {
       repository = "analytics-service"
-      tag        = "v14"        # ✅ NEW TAG
+      tag        = "v15"        # ✅ NEW TAG
       pullPolicy = "Never"
     }
     replicaCount = 1
