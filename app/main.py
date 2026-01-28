@@ -1,16 +1,25 @@
-
 from flask import Flask, jsonify
-import time, os, threading
-from prometheus_flask_exporter import PrometheusMetrics
+import time
+import os
+import threading
+import logging
 
-from consumer.consumer import start_consumer 
+from prometheus_flask_exporter import PrometheusMetrics
+from consumer.consumer import start_consumer
 
 app = Flask(__name__)
 start_time = time.time()
 
+# ---------- Prometheus ----------
 metrics = PrometheusMetrics(app, path="/metrics")
-metrics.info("app_info", "Application info", version=os.getenv("APP_VERSION", "0.1.0"), service="analytics-service")
+metrics.info(
+    "app_info",
+    "Application info",
+    version=os.getenv("APP_VERSION", "0.1.0"),
+    service="analytics-service"
+)
 
+# ---------- Health endpoint ----------
 @app.route("/health")
 def health():
     uptime = time.time() - start_time
@@ -21,18 +30,25 @@ def health():
         "version": os.getenv("APP_VERSION", "0.1.0")
     }), 200
 
+# ---------- Kafka consumer thread ----------
 def start_kafka_consumer():
-    print("[analytics-service] Starting Kafka consumer thread...", flush=True)
+    logging.info("[analytics-service] Starting Kafka consumer thread")
     try:
         start_consumer()
     except Exception as e:
-        import traceback
-        print("[analytics-service] Consumer crashed:", e, flush=True)
-        traceback.print_exc()
+        logging.exception("[analytics-service] Kafka consumer crashed")
 
 if __name__ == "__main__":
-    consumer_thread = threading.Thread(target=start_kafka_consumer)
-    consumer_thread.daemon = True
+    logging.basicConfig(level=logging.INFO)
+
+    consumer_thread = threading.Thread(
+        target=start_kafka_consumer,
+        daemon=True
+    )
     consumer_thread.start()
-    print("[analytics-service] Flask server starting on 0.0.0.0:8080", flush=True)
-    app.run(host="0.0.0.0", port=int(os.getenv("PORT", "8080")))
+
+    logging.info("[analytics-service] Flask server starting on 0.0.0.0:8080")
+    app.run(
+        host="0.0.0.0",
+        port=int(os.getenv("PORT", "8080"))
+    )

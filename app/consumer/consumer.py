@@ -1,41 +1,52 @@
-
-from kafka import KafkaConsumer, TopicPartition
-import json, time, os, logging
-from prometheus_client import Counter, Gauge
-
-from consumer.metrics import (
-    kafka_consumer_lag,
-    kafka_message_latency_ms,
-    kafka_messages_consumed_total
-)
+import json
+import time
+import os
+import logging
+from kafka import KafkaConsumer
 
 from consumer.analytics_producer import publish_analytics
-from consumer.influx_writer import write_event_ingest   
+from consumer.influx_writer import write_event_ingest
+from consumer.metrics import (
+    analytics_events_consumed_total,
+    analytics_events_published_total,
+    analytics_event_processing_latency_ms,
+    analytics_processing_errors_total,
+    analytics_event_validation_failures_total,
+    analytics_events_in_flight,
+)
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("analytics-consumer")
 
-
-BOOTSTRAP = os.getenv("KAFKA_BOOTSTRAP", "team4-kafka-kafka-bootstrap.team4.svc:9092")
-
-ENABLE_ANALYTICS = os.getenv("ENABLE_ANALYTICS_TOPIC", "false").lower() == "true"
+BOOTSTRAP = os.getenv(
+    "KAFKA_BOOTSTRAP",
+    "team4-kafka-kafka-bootstrap.team4.svc:9092"
+)
 
 INPUT_TOPICS = [
     t.strip()
-    for t in os.getenv("INPUT_TOPICS", "user-events,order-events,notification-events").split(",")
+    for t in os.getenv(
+        "INPUT_TOPICS",
+        "user-events,order-events,notification-events"
+    ).split(",")
     if t.strip()
 ]
 
-GROUP_ID = os.getenv("CONSUMER_GROUP", "observability-group")
+GROUP_ID = os.getenv("CONSUMER_GROUP", "analytics-consumer-group")
 
-analytics_events_published_total = Counter(
-    "analytics_events_published_total",
-    "Total analytics events published",
+ENABLE_ANALYTICS = (
+    os.getenv("ENABLE_ANALYTICS_TOPIC", "false").lower() == "true"
 )
 
 
 def start_consumer():
-    """Start Kafka consumer with retry logic and event processing."""
+    """
+    Kafka consumer for Analytics Service.
+    Consumes events from all upstream services and emits
+    application-level metrics for observability.
+    """
+
+    # ---------- Kafka connection with retry ----------
     while True:
         try:
             consumer = KafkaConsumer(
@@ -47,61 +58,86 @@ def start_consumer():
                 max_poll_records=500,
             )
             consumer.subscribe(INPUT_TOPICS)
-            log.info(f"Consuming from topics: {INPUT_TOPICS} @ {BOOTSTRAP}")
+            log.info(f"Consuming from topics: {INPUT_TOPICS}")
             break
         except Exception as e:
-            log.error(f"Kafka connection failed: {e}; retrying in 2s")
+            log.error(f"Kafka connection failed: {e}. Retrying in 2s...")
             time.sleep(2)
 
+    # ---------- Main consume loop ----------
     while True:
         try:
             records = consumer.poll(timeout_ms=1000)
-
             if not records:
                 continue
 
-            for tp, msgs in records.items():
-                for message in msgs:
+            for _, messages in records.items():
+                for message in messages:
 
-                    topic = message.topic
-                    val = message.value or {}
-
-                    produced_at = int(val.get("produced_at", int(time.time() * 1000)))
-                    consumed_at = int(time.time() * 1000)
-                    latency = max(0, consumed_at - produced_at)
-
-                    kafka_message_latency_ms.labels(topic=topic).set(latency)
-                    kafka_messages_consumed_total.labels(topic=topic).inc()
-
-                    end_offset = consumer.end_offsets([tp]).get(tp, message.offset)
-                    lag = max(0, end_offset - message.offset - 1)
-                    kafka_consumer_lag.labels(topic=topic).set(lag)
-
-                    event_type = val.get("event_type", "unknown")
-                    source_team = val.get("source_team", "unknown")
+                    analytics_events_in_flight.inc()
+                    start_time = time.time()
 
                     try:
+                        topic = message.topic
+                        value = message.value or {}
+
+                        # -------- Event validation --------
+                        if (
+                            "event_type" not in value
+                            or "source_team" not in value
+                        ):
+                            analytics_event_validation_failures_total.inc()
+                            raise ValueError("Invalid event schema")
+
+                        produced_at = int(
+                            value.get(
+                                "produced_at",
+                                int(time.time() * 1000)
+                            )
+                        )
+                        consumed_at = int(time.time() * 1000)
+                        latency_ms = max(0, consumed_at - produced_at)
+
+                        # -------- Business metrics --------
+                        analytics_events_consumed_total.labels(
+                            topic=topic
+                        ).inc()
+
+                        analytics_event_processing_latency_ms.labels(
+                            topic=topic
+                        ).observe((time.time() - start_time) * 1000)
+
+                        # -------- Persist to InfluxDB --------
                         write_event_ingest(
                             topic=topic,
-                            event_type=event_type,
-                            source_team=source_team,
-                            latency_ms=latency,
-                            lag=lag,
-                            ts_ms=consumed_at
+                            event_type=value.get("event_type"),
+                            source_team=value.get("source_team"),
+                            latency_ms=latency_ms,
+                            lag=0,  # Kafka lag handled by Kafka Exporter
+                            ts_ms=consumed_at,
                         )
-                    except Exception as influx_err:
-                        log.warning(f"Influx write failed: {influx_err}")
 
-                    if ENABLE_ANALYTICS:
-                        publish_analytics(topic, lag, latency)
-                        analytics_events_published_total.inc()
+                        # -------- Optional analytics publish --------
+                        if ENABLE_ANALYTICS:
+                            publish_analytics(
+                                topic=topic,
+                                lag=0,
+                                latency=latency_ms,
+                            )
+                            analytics_events_published_total.inc()
 
-                    log.info(
-                        f"[{topic}] type={event_type} latency={latency}ms "
-                        f"lag={lag} offset={message.offset}"
-                    )
+                        log.info(
+                            f"[{topic}] type={value.get('event_type')} "
+                            f"latency={latency_ms}ms"
+                        )
+
+                    except Exception as e:
+                        analytics_processing_errors_total.inc()
+                        log.exception(f"Error processing message: {e}")
+
+                    finally:
+                        analytics_events_in_flight.dec()
 
         except Exception as e:
-            log.exception(f"Error processing message: {e}, retrying...")
-            time.sleep(0.2)
-
+            log.exception(f"Consumer loop error: {e}")
+            time.sleep(1)
