@@ -55,6 +55,31 @@ kubectl logs deploy/analytics-service-analytics-service -n team4 -f
 
 - kubectl delete secret influxdb-auth -n team4
 - kubectl create secret generic influxdb-auth -n team4 \
-  --from-literal=token='TOKEN'
+  --from-literal=token='dYdM_rEyjoGAMyIMNH8g2hqzMkl0b40Dg3_5SOz6z7MzRrBoXrdAh792NHJgvPhYsQW5tMWZgWmublLc-i83TQ=='
 - kubectl -n team4 rollout restart deploy/analytics-service-analytics-service
 - terraform apply --auto-approve
+
+
+# Remove release (statefulset will go)
+helm uninstall elasticsearch -n observability
+
+# Delete ES data PVC (wipes data; fixes stale index/permission)
+kubectl -n observability delete pvc -l app=elasticsearch-master
+# or explicitly:
+# kubectl -n observability delete pvc elasticsearch-master-elasticsearch-master-0
+
+# Re-apply with Terraform so Helm recreates cleanly
+terraform apply -auto-approve
+
+# Watch pods
+kubectl -n observability get pods -w
+
+
+----
+
+
+# Current container logs (last 200 lines)
+kubectl -n observability logs elasticsearch-master-0 -c elasticsearch --tail=200
+
+# Previous crash logs (why it exited with code 1 earlier)
+kubectl -n observability logs elasticsearch-master-0 -c elasticsearch --previous --tail=200

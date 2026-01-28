@@ -1,0 +1,38 @@
+replicas: 1
+
+# ✅ Env: keep HTTPS + credentials (you already set these)
+env:
+  - name: ELASTICSEARCH_HOSTS
+    value: "https://elasticsearch-master.observability.svc.cluster.local:9200"
+  - name: ELASTICSEARCH_USERNAME
+    value: "elastic"
+  - name: ELASTICSEARCH_PASSWORD
+    valueFrom:
+      secretKeyRef:
+        name: elasticsearch-master-credentials
+        key: password
+  - name: ELASTICSEARCH_SSL_VERIFICATIONMODE
+    value: "none"
+
+  # ✅ Cap Node.js heap to fit within container memory (adjust if you bump limits)
+  - name: NODE_OPTIONS
+    value: "--max-old-space-size=768"
+
+# ✅ Give Kibana enough memory to start reliably on dev clusters
+resources:
+  requests:
+    cpu: "200m"
+    memory: "512Mi"
+  limits:
+    cpu: "1"
+    memory: "1Gi"
+
+# (Optional) reduce some xpack features for dev to lower footprint
+# xpack:
+#   monitoring:
+#     ui:
+#       enabled: true
+#   reporting:
+#     enabled: false
+#   security:
+#     enabled: true

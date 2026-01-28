@@ -310,3 +310,39 @@ resource "kubernetes_manifest" "kafka_exporter_sm" {
     module.monitoring
   ]
 }
+
+
+module "ns_observability" {
+  source = "./modules/namespace"
+  name   = "observability"
+}
+
+module "elasticsearch" {
+  source       = "./modules/logging/elasticsearch"
+  release_name = "elasticsearch"
+  namespace    = module.ns_observability.name
+  
+  depends_on   = [module.ns_observability]
+
+}
+
+module "kibana" {
+  source       = "./modules/logging/kibana"
+  release_name = "kibana"
+  namespace    = module.ns_observability.name
+  depends_on   = [module.elasticsearch]   # ✅ enforce order here
+}
+
+module "filebeat" {
+  source       = "./modules/logging/filebeat"
+  release_name = "filebeat"
+  namespace    = module.ns_observability.name
+  depends_on   = [module.elasticsearch]   # ✅ enforce order here
+}
+
+module "kibana_objects" {
+  source    = "./modules/logging/kibana-objects"
+  name      = "kibana-objects"
+  namespace = module.ns_observability.name
+  depends_on = [module.kibana]            # ✅ enforce order here
+}
