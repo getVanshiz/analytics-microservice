@@ -27,7 +27,7 @@ kubectl get kafkatopics -n team4
 
 
 # create or update analytics service
-nerdctl --namespace k8s.io build -t analytics-service:v5 -f docker/Dockerfile .
+nerdctl --namespace k8s.io build -t analytics-service:v19 -f docker/Dockerfile .
 cd terraform
 change version in main.tf
 terraform apply -auto-approve
@@ -83,3 +83,10 @@ kubectl -n observability logs elasticsearch-master-0 -c elasticsearch --tail=200
 
 # Previous crash logs (why it exited with code 1 earlier)
 kubectl -n observability logs elasticsearch-master-0 -c elasticsearch --previous --tail=200
+
+
+# Elastic search
+kubectl get secret -n observability elasticsearch-master-credentials \
+  -o jsonpath='{.data.password}' | base64 --decode
+
+curl -k -u elastic:<Password> https://localhost:9200/

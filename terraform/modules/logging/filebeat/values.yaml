@@ -3,16 +3,31 @@ daemonset:
   podSecurityContext:
     runAsUser: 0
 
+deployment:
+  enabled: false
+
+hostPath:
+  enabled: false
+
 extraEnvs:
   - name: ES_PASSWORD
     valueFrom:
       secretKeyRef:
         name: elasticsearch-master-credentials
         key: password
+
   - name: NODE_NAME
     valueFrom:
       fieldRef:
         fieldPath: spec.nodeName
+
+extraInitContainers:
+  - name: remove-stale-lock
+    image: busybox:1.36
+    command:
+      - sh
+      - -c
+      - rm -f /usr/share/filebeat/data/filebeat.lock || true
 
 filebeatConfig:
   filebeat.yml: |
@@ -22,9 +37,6 @@ filebeatConfig:
         paths:
           - /var/log/containers/*.log
 
-        json.keys_under_root: true
-        json.add_error_key: true
-        
         processors:
           - add_kubernetes_metadata:
               host: ${NODE_NAME}
@@ -32,26 +44,116 @@ filebeatConfig:
                 - logs_path:
                     logs_path: "/var/log/containers/"
 
+          - drop_event:
+              when:
+                not:
+                  equals:
+                    kubernetes.namespace: "team4"
+
+          # CRI prefix handling
+          - dissect:
+              when:
+                regexp:
+                  message: '^\d{4}-\d{2}-\d{2}T'
+              tokenizer: "%{cri_ts} %{cri_stream} %{cri_flag} %{json_message}"
+              field: "message"
+              target_prefix: ""
+
+          # Decode JSON from CRI payload
+          - decode_json_fields:
+              when:
+                regexp:
+                  json_message: '^\s*\{'
+              fields: ["json_message"]
+              target: "app"
+              overwrite_keys: false
+              add_error_key: true
+
+          # Decode JSON when message is already JSON
+          - decode_json_fields:
+              when:
+                regexp:
+                  message: '^\s*\{'
+              fields: ["message"]
+              target: "app"
+              overwrite_keys: false
+              add_error_key: true
+
+          # Promote fields to ECS
+          - rename:
+              when:
+                has_fields: ["app.level"]
+              fields:
+                - from: "app.level"
+                  to: "log.level"
+              ignore_missing: true
+              fail_on_error: false
+
+          - rename:
+              when:
+                and:
+                  - has_fields: ["app.service"]
+                  - not:
+                      has_fields: ["service.name"]
+              fields:
+                - from: "app.service"
+                  to: "service.name"
+              ignore_missing: true
+              fail_on_error: false
+
+          - rename:
+              when:
+                has_fields: ["app.trace_id"]
+              fields:
+                - from: "app.trace_id"
+                  to: "trace.id"
+              ignore_missing: true
+              fail_on_error: false
+
+          # ✅ FINAL FIX (correct JS syntax for Filebeat):
+          # Replace message JSON blob with app.message if present
+          - script:
+              lang: javascript
+              id: set_message_from_app
+              source: >
+                function process(event) {
+                  var m = event.Get("app.message");
+                  if (m !== null && m !== undefined) {
+                    event.Put("message", m);
+                  }
+                }
+
+          # Cleanup helper fields
+          - drop_fields:
+              fields: ["json_message", "cri_ts", "cri_stream", "cri_flag"]
+              ignore_missing: true
+
     output.elasticsearch:
       hosts: ["https://elasticsearch-master.observability.svc.cluster.local:9200"]
       username: "elastic"
       password: "${ES_PASSWORD}"
       ssl.verification_mode: "none"
-      index: "logs-%{+yyyy.MM.dd}"
+      index: "logs-team4-v1-%{+yyyy.MM.dd}"
 
     setup.template.enabled: false
     setup.ilm.enabled: false
 
 extraVolumes:
   - name: varlogcontainers
-    hostPath: { path: /var/log/containers }
+    hostPath:
+      path: /var/log/containers
+      type: ""
+
   - name: varlogpods
-    hostPath: { path: /var/log/pods }
+    hostPath:
+      path: /var/log/pods
+      type: ""
 
 extraVolumeMounts:
   - name: varlogcontainers
     mountPath: /var/log/containers
     readOnly: true
+
   - name: varlogpods
     mountPath: /var/log/pods
     readOnly: true

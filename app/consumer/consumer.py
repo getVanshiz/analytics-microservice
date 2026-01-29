@@ -1,8 +1,9 @@
 import json
 import time
 import os
-import logging
 import uuid
+import logging
+import traceback
 from kafka import KafkaConsumer
 
 from consumer.analytics_producer import publish_analytics
@@ -15,7 +16,6 @@ from consumer.metrics import (
     analytics_event_validation_failures_total,
     analytics_events_in_flight,
 )
-
 
 log = logging.getLogger("analytics-consumer")
 
@@ -40,7 +40,28 @@ ENABLE_ANALYTICS = (
 )
 
 
+def _log_fields(topic, event_type, source_team, **more):
+    return {
+        "event": {
+            "name": event_type,
+        },
+        "kafka": {
+            "topic": topic,
+        },
+        "source": {
+            "team": source_team,
+        },
+        **more
+    }
+
+
 def start_consumer():
+    """
+    Kafka consumer for Analytics Service.
+    Consumes events from all upstream services and emits
+    application-level metrics and structured logs.
+    """
+
     # ---------- Kafka connection with retry ----------
     while True:
         try:
@@ -55,15 +76,25 @@ def start_consumer():
             consumer.subscribe(INPUT_TOPICS)
 
             log.info(
-                "Kafka consumer connected",
-                extra={"extra": {"topics": INPUT_TOPICS, "group": GROUP_ID}}
+                "kafka consumer connected",
+                extra={
+                    "extra_fields": {
+                        "topics": INPUT_TOPICS,
+                        "group_id": GROUP_ID,
+                    }
+                },
             )
             break
 
         except Exception as e:
             log.error(
-                "Kafka connection failed, retrying",
-                extra={"extra": {"bootstrap": BOOTSTRAP}}
+                "kafka connection failed, retrying",
+                exc_info=True,
+                extra={
+                    "extra_fields": {
+                        "bootstrap": BOOTSTRAP,
+                    }
+                },
             )
             time.sleep(2)
 
@@ -76,78 +107,143 @@ def start_consumer():
 
             for _, messages in records.items():
                 for message in messages:
+
                     analytics_events_in_flight.inc()
                     start_time = time.time()
 
                     value = message.value or {}
-                    topic = message.topic
+
+                    # -------- Trace ID handling --------
                     trace_id = value.get("trace_id", str(uuid.uuid4()))
 
                     try:
-                        # -------- Validation --------
-                        if "event_type" not in value or "source_team" not in value:
+                        # -------- Log: event received --------
+                        log.info(
+                            "event received",
+                            extra={
+                                "trace_id": trace_id,
+                                "extra": {
+                                    "event": {
+                                        "action": "received",
+                                        "outcome": "unknown",
+                                        "name": value.get("event_type"),
+                                    },
+                                    "kafka": {"topic": message.topic},
+                                    "source": {"team": value.get("source_team")},
+                                },
+                            },
+                        )
+
+
+                        # -------- Event validation --------
+                        if (
+                            "event_type" not in value
+                            or "source_team" not in value
+                        ):
                             analytics_event_validation_failures_total.inc()
-                            log.error(
-                                "Invalid event schema",
+
+                            log.warning(
+                                "event validation failed",
                                 extra={
                                     "trace_id": trace_id,
-                                    "extra": {"topic": topic, "event": value}
-                                }
+                                    "extra": {
+                                        "event": {
+                                            "action": "validate",
+                                            "outcome": "failure",
+                                            "name": value.get("event_type"),
+                                        },
+                                        "kafka": {"topic": message.topic},
+                                        "source": {"team": value.get("source_team")},
+                                        # Avoid dumping full payload unless needed (can be huge/sensitive)
+                                        "validation": {"missing_fields": ["event_type", "source_team"]},
+                                    },
+                                },
                             )
-                            continue
+
+                            raise ValueError("Invalid event schema")
 
                         produced_at = int(
-                            value.get("produced_at", int(time.time() * 1000))
+                            value.get(
+                                "produced_at",
+                                int(time.time() * 1000)
+                            )
                         )
                         consumed_at = int(time.time() * 1000)
                         latency_ms = max(0, consumed_at - produced_at)
 
-                        analytics_events_consumed_total.labels(topic=topic).inc()
+                        # -------- Metrics --------
+                        analytics_events_consumed_total.labels(
+                            topic=message.topic
+                        ).inc()
 
                         analytics_event_processing_latency_ms.labels(
-                            topic=topic
+                            topic=message.topic
                         ).observe((time.time() - start_time) * 1000)
 
+                        # -------- Persist to InfluxDB --------
                         write_event_ingest(
-                            topic=topic,
+                            topic=message.topic,
                             event_type=value.get("event_type"),
                             source_team=value.get("source_team"),
                             latency_ms=latency_ms,
-                            lag=0,
+                            lag=0,  # Kafka lag via exporter
                             ts_ms=consumed_at,
                         )
 
+                        # -------- Optional analytics publish --------
                         if ENABLE_ANALYTICS:
                             publish_analytics(
-                                topic=topic,
+                                topic=message.topic,
                                 lag=0,
                                 latency=latency_ms,
                                 trace_id=trace_id,
                             )
                             analytics_events_published_total.inc()
 
+                        # -------- Log: success --------
                         log.info(
-                            "Event processed",
+                            "event processed",
                             extra={
                                 "trace_id": trace_id,
                                 "extra": {
-                                    "topic": topic,
-                                    "event_type": value.get("event_type"),
-                                    "latency_ms": latency_ms
-                                }
-                            }
+                                    "event": {
+                                        "action": "processed",
+                                        "outcome": "success",
+                                        "name": value.get("event_type"),
+                                    },
+                                    "kafka": {"topic": message.topic},
+                                    "source": {"team": value.get("source_team")},
+                                    "event_metrics": {"latency_ms": latency_ms},
+                                },
+                            },
                         )
 
                     except Exception:
                         analytics_processing_errors_total.inc()
-                        log.exception(
-                            "Error processing message",
-                            extra={"trace_id": trace_id}
+
+                        log.error(
+                            "event processing error",
+                            exc_info=True,
+                            extra={
+                                "trace_id": trace_id,
+                                "extra": {
+                                    "event": {
+                                        "action": "processed",
+                                        "outcome": "failure",
+                                        "name": value.get("event_type"),
+                                    },
+                                    "kafka": {"topic": message.topic},
+                                    "source": {"team": value.get("source_team")},
+                                },
+                            },
                         )
 
                     finally:
                         analytics_events_in_flight.dec()
 
         except Exception:
-            log.exception("Consumer loop error")
+            log.error(
+                "consumer loop error",
+                exc_info=True,
+            )
             time.sleep(1)

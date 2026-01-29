@@ -11,15 +11,23 @@ class JsonFormatter(logging.Formatter):
             "level": record.levelname,
             "service": "analytics-service",
             "message": record.getMessage(),
+            "logger": record.name,
         }
 
         # trace_id support
         if hasattr(record, "trace_id"):
             log["trace_id"] = record.trace_id
 
-        # structured extra fields
-        if hasattr(record, "extra"):
+        # Support BOTH patterns:
+        # - extra={"extra": {...}}  (used in main.py)
+        # - extra={"extra_fields": {...}} (used in consumer.py)
+        if hasattr(record, "extra") and isinstance(record.extra, dict):
             log.update(record.extra)
+
+        if hasattr(record, "extra_fields") and isinstance(record.extra_fields, dict):
+            # Put them under a consistent key to avoid polluting top-level
+            log.setdefault("fields", {})
+            log["fields"].update(record.extra_fields)
 
         return json.dumps(log)
 
