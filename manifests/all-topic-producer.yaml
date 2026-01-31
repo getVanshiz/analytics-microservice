@@ -17,24 +17,36 @@ spec:
       containers:
         - name: all-topics-producer
           image: python:3.9-slim
+          env:
+            - name: KAFKA_BOOTSTRAP
+              value: "team4-kafka-kafka-bootstrap.team4.svc:9092"
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: "http://otel-collector.monitoring.svc.cluster.local:4317"
           command: ["bash", "-lc"]
           args:
             - |
-              pip install --no-cache-dir kafka-python && \
-              python - << 'PY'
+              pip install --no-cache-dir kafka-python \
+                opentelemetry-api opentelemetry-sdk \
+                opentelemetry-exporter-otlp-proto-grpc && \
+              python - <<'PY'
               import json, time, uuid, os, random
               from kafka import KafkaProducer
+              from opentelemetry import propagate, trace
+              from opentelemetry.sdk.trace import TracerProvider
+              from opentelemetry.sdk.trace.export import BatchSpanProcessor
+              from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
 
-              BOOTSTRAP = os.getenv(
-                  "KAFKA_BOOTSTRAP",
-                  "team4-kafka-kafka-bootstrap.team4.svc:9092"
+              BOOTSTRAP = os.getenv("KAFKA_BOOTSTRAP","team4-kafka-kafka-bootstrap.team4.svc:9092")
+              TOPICS = ["user-events","order-events","notification-events"]
+
+              # Minimal tracing init (producer side) to create spans and context
+              trace.set_tracer_provider(TracerProvider())
+              exporter = OTLPSpanExporter(
+                  endpoint=os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT","http://otel-collector.monitoring.svc.cluster.local:4317"),
+                  insecure=True
               )
-
-              TOPICS = [
-                  "user-events",
-                  "order-events",
-                  "notification-events"
-              ]
+              trace.get_tracer_provider().add_span_processor(BatchSpanProcessor(exporter))
+              tracer = trace.get_tracer("all-topics-producer")
 
               producer = KafkaProducer(
                   bootstrap_servers=[BOOTSTRAP],
@@ -43,81 +55,28 @@ spec:
                   retries=5
               )
 
-              print("[producer] Producing to ALL topics:", TOPICS)
-
-              # Random schemas for each event stream
-              def make_user_event():
-                  return {
-                      "event_id": str(uuid.uuid4()),
-                      "event_type": random.choice([
-                          "user_created",
-                          "user_updated",
-                          "user_deleted"
-                      ]),
-                      "source_team": "team-1",
-                      "payload": {
-                          "user_id": str(uuid.uuid4()),
-                          "email": f"user{random.randint(1,999)}@example.com",
-                          "name": random.choice(["Vanshika", "Aarav", "Neha", "Ruhi"])
-                      },
-                      "produced_at": int(time.time() * 1000)
-                  }
-
-              def make_order_event():
-                  return {
-                      "event_id": str(uuid.uuid4()),
-                      "event_type": random.choice([
-                          "order_created",
-                          "order_confirmed",
-                          "order_shipped"
-                      ]),
-                      "source_team": "team-2",
-                      "payload": {
-                          "order_id": str(uuid.uuid4()),
-                          "user_id": str(uuid.uuid4()),
-                          "amount": random.randint(100, 1500),
-                          "currency": "INR"
-                      },
-                      "produced_at": int(time.time() * 1000)
-                  }
-
-              def make_notification_event():
-                  return {
-                      "event_id": str(uuid.uuid4()),
-                      "event_type": random.choice([
-                          "notification_sent",
-                          "notification_failed"
-                      ]),
-                      "source_team": "team-3",
-                      "payload": {
-                          "order_id": str(uuid.uuid4()),
-                          "user_id": str(uuid.uuid4()),
-                          "channel": random.choice(["email", "sms"])
-                      },
-                      "produced_at": int(time.time() * 1000)
-                  }
+              def mk_event(topic):
+                  now = int(time.time()*1000)
+                  if topic == "user-events":
+                      et = random.choice(["user_created","user_updated","user_deleted"])
+                      return {"event_id":str(uuid.uuid4()),"event_type":et,"source_team":"team-1","payload":{}, "produced_at":now}
+                  if topic == "order-events":
+                      et = random.choice(["order_created","order_confirmed","order_shipped"])
+                      return {"event_id":str(uuid.uuid4()),"event_type":et,"source_team":"team-2","payload":{}, "produced_at":now}
+                  et = random.choice(["notification_sent","notification_failed"])
+                  return {"event_id":str(uuid.uuid4()),"event_type":et,"source_team":"team-3","payload":{}, "produced_at":now}
 
               while True:
                   topic = random.choice(TOPICS)
+                  event = mk_event(topic)
 
-                  if topic == "user-events":
-                      event = make_user_event()
-                  elif topic == "order-events":
-                      event = make_order_event()
-                  else:
-                      event = make_notification_event()
+                  # Create a producing span and inject W3C context into headers
+                  with tracer.start_as_current_span("produce_event"):
+                      carrier = {}  # dict[str,str]
+                      propagate.inject(carrier)  # adds traceparent, tracestate
+                      headers = [(k, v.encode()) for k, v in carrier.items()]
 
-                  md = producer.send(topic, event).get(timeout=10)
-
-                  print(
-                      f"[{topic}] → {event['event_type']} "
-                      f"offset={md.offset} partition={md.partition}",
-                      flush=True
-                  )
-
+                      md = producer.send(topic, value=event, headers=headers).get(timeout=10)
+                      print(f"[{topic}] offset={md.offset} partition={md.partition}", flush=True)
                   time.sleep(1)
-
               PY
-          env:
-            - name: KAFKA_BOOTSTRAP
-              value: "team4-kafka-kafka-bootstrap.team4.svc:9092"

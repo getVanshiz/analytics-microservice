@@ -1,0 +1,47 @@
+# terraform/modules/logging/opentelemetry/values.yaml
+image:
+  repository: "otel/opentelemetry-collector-contrib"
+  # tag: "0.105.0"   # optional pin if you want reproducibility
+
+command:
+  name: "otelcol-contrib"
+
+mode: deployment
+
+resources:
+  requests: { cpu: 100m, memory: 256Mi }
+  limits:   { cpu: 500m, memory: 512Mi }
+
+# Do NOT set service.ports; the chart derives ports from receivers.
+config:
+  receivers:
+    otlp:
+      protocols:
+        grpc: {}
+        http: {}
+
+  processors:
+    batch: {}
+
+  exporters:
+    # 'logging' is deprecated; use 'debug'
+    debug:
+      verbosity: normal
+
+    # Send traces to Jaeger via OTLP gRPC (4317) on the unified 'jaeger' Service
+    otlp:
+      endpoint: "jaeger.monitoring.svc.cluster.local:4317"
+      tls:
+        insecure: true
+
+  extensions:
+    health_check:
+      endpoint: "0.0.0.0:13133"
+
+  service:
+    extensions: [health_check]
+    pipelines:
+      traces:
+        receivers:  [otlp]
+        processors: [batch]
+        exporters:  [otlp, debug]

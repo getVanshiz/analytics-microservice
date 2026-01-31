@@ -1,0 +1,21 @@
+
+filebeatConfig:
+  filebeat.yml: |
+    filebeat.inputs:
+      - type: container
+        enabled: true
+        paths:
+          - /var/log/containers/*.log
+
+    output.elasticsearch:
+      hosts: ["https://elasticsearch-master.monitoring.svc.cluster.local:9200"]
+      username: "elastic"
+      password: "${ELASTIC_PASSWORD}"
+      ssl.verification_mode: none
+
+extraEnvs:
+  - name: ELASTIC_PASSWORD
+    valueFrom:
+      secretKeyRef:
+        name: elasticsearch-master-credentials
+        key: password

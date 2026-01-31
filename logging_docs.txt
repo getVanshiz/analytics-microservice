@@ -1,0 +1,308 @@
+# **1) Verify all monitoring pods are running**
+
+```bash
+kubectl get pods -n monitoring
+```
+
+You should see:
+
+*   `filebeat-*`
+*   `elasticsearch-master-*`
+*   `kibana-*`
+*   `otel-collector-*`
+*   `jaeger-*`
+*   Prometheus/Grafana (optional)
+
+For your team namespace:
+
+```bash
+kubectl get pods -n team4
+```
+
+You should see:
+
+*   `analytics-service-*`
+*   `all-topics-producer` (if running)
+
+***
+
+# **2) Check app logs from Kubernetes stdout (raw logs)**
+
+```bash
+kubectl -n team4 logs deploy/analytics-service-analytics-service --tail=100
+```
+
+You should see structured JSON logs like:
+
+```json
+{"timestamp": "...", "level": "INFO", "service": "analytics-service", "message": "health check called", "trace_id": "..."}
+```
+
+This confirms:
+✔ The app is alive  
+✔ Your logging\_config works  
+✔ Trace IDs are injected
+
+***
+
+# **3) Verify Filebeat is harvesting logs**
+
+```bash
+kubectl -n monitoring logs pod/<filebeat-pod-name> --tail=100
+```
+
+Find it via:
+
+```bash
+kubectl -n monitoring get pods | grep filebeat
+```
+
+You're looking for messages like:
+
+    Harvester started
+    Successfully published events
+    added=XYZ done=XYZ acked=XYZ
+
+This confirms:
+✔ Filebeat is reading logs  
+✔ Filebeat is shipping logs to Elasticsearch
+
+***
+
+# **4) Get Elasticsearch Username & Password**
+
+Run:
+
+```bash
+kubectl -n monitoring get secret elasticsearch-master-credentials -o jsonpath='{.data.username}' | base64 -d; echo
+kubectl -n monitoring get secret elasticsearch-master-credentials -o jsonpath='{.data.password}' | base64 -d; echo
+```
+
+You’ll get something like:
+
+    elastic
+    AdYEfBIClTQO6pDB
+
+These are the correct ES + Kibana login credentials.
+
+***
+
+# **5) Start Elasticsearch port-forward (HTTPS only)**
+
+```bash
+kubectl -n monitoring port-forward svc/elasticsearch-master 9200:9200
+```
+
+Keep this terminal open.
+
+***
+
+# **6) Test Elasticsearch API (MUST use HTTPS + -k + basic auth)**
+
+Open a NEW terminal and run:
+
+```bash
+curl -k -u elastic:AdYEfBIClTQO6pDB https://localhost:9200/
+```
+
+Expected output:
+
+```json
+{
+  "name" : "elasticsearch-master-0",
+  "cluster_name" : "elasticsearch",
+  ...
+}
+```
+
+If you see that → you’re officially authenticated.
+
+***
+
+# **7) List Elasticsearch indices (see where logs are stored)**
+
+```bash
+curl -k -u elastic:AdYEfBIClTQO6pDB 'https://localhost:9200/_cat/indices?v'
+```
+
+You will see either:
+
+### Option A — Default Filebeat:
+
+    filebeat-8.5.1-2026.01.31
+
+### Option B — Your custom index:
+
+    team4-logs-2026.01.31
+
+Remember this index name — you’ll use it in Kibana.
+
+***
+
+# **8) Port-forward Kibana**
+
+```bash
+kubectl -n monitoring port-forward svc/kibana-kibana 5601:5601
+```
+
+Open:
+👉 **<http://localhost:5601>**
+
+Log in using the SAME credentials:
+
+*   **Username:** `elastic`
+*   **Password:** `AdYEfBIClTQO6pDB`
+
+***
+
+# **9) Create Kibana Data View (VERY IMPORTANT)**
+
+Go to:
+
+**Stack Management → Data Views → Create data view**
+
+Enter:
+
+### If index is `filebeat-*`:
+
+*   Name: `filebeat`
+*   Index pattern: `filebeat-*`
+*   Timestamp field: `@timestamp`
+
+### If index is `team4-logs-*`:
+
+*   Name: `team4-logs`
+*   Index pattern: `team4-logs-*`
+*   Timestamp field: `@timestamp`
+
+Press **Create data view**.
+
+***
+
+# **10) View logs in Kibana Discover**
+
+Go to:
+
+**Discover → select your data view (left side)**
+
+Set top-right time range to **Last 15 minutes**.
+
+Try these searches:
+
+### All logs from analytics-service:
+
+    service:"analytics-service" OR service.name:"analytics-service"
+
+### Only health check logs:
+
+    message: "health check called"
+
+### Search by trace ID (copy from Jaeger)
+
+    trace.id: "<paste-id>"
+
+or if using original fields:
+
+    trace_id: "<paste-id>"
+
+***
+
+# **11) Port-forward Jaeger UI**
+
+```bash
+kubectl -n monitoring port-forward svc/jaeger 16686:16686
+```
+
+Open:
+👉 **<http://localhost:16686>**
+
+Find traces:
+
+*   Go to **Search**
+*   Service = **analytics-service**
+*   Click **Find traces**
+
+Trigger a new trace:
+
+```bash
+kubectl -n team4 port-forward svc/analytics-service-analytics-service 8080:8080
+curl http://localhost:8080/health
+```
+
+A new trace will appear instantly.
+
+***
+
+# **12) Cross-correlate Logs ↔ Traces**
+
+In Jaeger:
+
+*   Open any trace → copy the **Trace ID**
+
+In Kibana Discover:
+
+    trace.id: "<paste-the-same-id>"
+
+You will now see all the logs for the same request/trace.
+
+🎯 **Milestone 4 officially complete.**
+
+***
+
+# 🎁 **13) Optional — Restart only Filebeat DS**
+
+```bash
+kubectl -n monitoring rollout restart ds/filebeat-filebeat
+kubectl -n monitoring rollout status ds/filebeat-filebeat
+```
+
+***
+
+# 🎁 **14) Optional — Restart Elasticsearch**
+
+```bash
+kubectl -n monitoring rollout restart sts/elasticsearch-master
+kubectl -n monitoring rollout status sts/elasticsearch-master
+```
+
+***
+
+# 🎯 FINAL QUICK CHECKLIST (super short version)
+
+    # 1. Pods
+    kubectl get pods -n monitoring
+    kubectl get pods -n team4
+
+    # 2. App logs
+    kubectl -n team4 logs deploy/analytics-service-analytics-service
+
+    # 3. Filebeat logs
+    kubectl -n monitoring logs pod/<filebeat-pod> --tail=100
+
+    # 4. Get ES creds
+    kubectl -n monitoring get secret elasticsearch-master-credentials -o jsonpath='{.data.username}' | base64 -d
+    kubectl -n monitoring get secret elasticsearch-master-credentials -o jsonpath='{.data.password}' | base64 -d
+
+    # 5. PF Elasticsearch
+    kubectl -n monitoring port-forward svc/elasticsearch-master 9200:9200
+
+    # 6. Test ES
+    curl -k -u elastic:<pass> https://localhost:9200/
+
+    # 7. List indices
+    curl -k -u elastic:<pass> 'https://localhost:9200/_cat/indices?v'
+
+    # 8. PF Kibana
+    kubectl -n monitoring port-forward svc/kibana-kibana 5601:5601
+
+    # 9. Create Data View in Kibana UI
+
+    # 10. View Logs in Kibana Discover
+
+    # 11. PF Jaeger
+    kubectl -n monitoring port-forward svc/jaeger 16686:16686
+
+    # 12. Trigger trace
+    curl http://localhost:8080/health
+
+    # 13. Correlate logs ↔ traces

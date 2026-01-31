@@ -1,7 +1,6 @@
-
 image:
   repository: analytics-service
-  tag: "v2"
+  tag: "v22"
   pullPolicy: Never
 
 replicaCount: 1
@@ -11,6 +10,10 @@ service:
   name: http
 
 env:
+  # 👇 Add this first so it overrides the Dockerfile's PYTHONPATH
+  - name: PYTHONPATH
+    value: "/"
+
   - name: KAFKA_BOOTSTRAP
     value: "team4-kafka-kafka-bootstrap.team4.svc:9092"
 
@@ -36,8 +39,21 @@ env:
   - name: INFLUX_TOKEN
     valueFrom:
       secretKeyRef:
-        name: influxdb-auth
-        key: token
+        name: influxdb2-auth
+        key: admin-token
+
+# (Your template does not render .Values.extraEnv; it's safe to keep or remove)
+extraEnv:
+  - name: OTEL_SERVICE_NAME
+    value: "analytics-service"
+  - name: OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
+    value: "http://otel-collector-opentelemetry-collector.monitoring.svc.cluster.local:4317"
+  - name: OTEL_EXPORTER_OTLP_PROTOCOL
+    value: "grpc"
+  - name: OTEL_TRACES_SAMPLER
+    value: "parentbased_always_on"
+  - name: OTEL_COLLECTOR_METRICS_ENDPOINT
+    value: "http://otel-collector-opentelemetry-collector.monitoring.svc.cluster.local:8888"
 
 podAnnotations:
   prometheus.io/scrape: "true"
@@ -54,3 +70,21 @@ serviceMonitor:
     release: kube-prometheus-stack
 
 labels: {}
+
+tracing:
+  enabled: true
+  serviceName: analytics-service
+  endpoint: http://otel-collector-opentelemetry-collector.monitoring.svc.cluster.local:4317
+  protocol: grpc
+  sampler: parentbased_always_on
+  resourceAttributes: {}
+
+probes:
+  liveness:
+    path: /health
+    initialDelaySeconds: 10   # bump a bit during bring-up
+    periodSeconds: 10
+  readiness:
+    path: /health
+    initialDelaySeconds: 10   # bump a bit during bring-up
+    periodSeconds: 5

@@ -118,7 +118,7 @@ module "analytics_service" {
   values = {
     image = {
       repository = "analytics-service"
-      tag        = "v14"        # ✅ NEW TAG
+      tag        = "v22"        # ✅ NEW TAG
       pullPolicy = "Never"
     }
     replicaCount = 1
@@ -142,6 +142,44 @@ module "analytics_service" {
     module.kafka
   ]
 }
+
+
+
+module "elasticsearch" {
+  source       = "./modules/logging/elasticsearch"
+  release_name = "elasticsearch"
+  namespace    = "monitoring"
+  depends_on   = [module.ns_monitoring]
+}
+
+module "kibana" {
+  source       = "./modules/logging/kibana"
+  release_name = "kibana"
+  namespace    = "monitoring"
+  depends_on   = [module.elasticsearch, module.ns_monitoring]
+}
+
+module "filebeat" {
+  source       = "./modules/logging/filebeat"
+  release_name = "filebeat"
+  namespace    = "monitoring"
+  depends_on   = [module.elasticsearch, module.ns_monitoring]
+}
+
+module "jaeger" {
+  source       = "./modules/logging/jaeger"
+  release_name = "jaeger"
+  namespace    = "monitoring"
+  depends_on   = [module.ns_monitoring]
+}
+
+module "otel" {
+  source       = "./modules/logging/opentelemetry"
+  release_name = "otel-collector"
+  namespace    = "monitoring"
+  depends_on   = [module.jaeger, module.ns_monitoring]
+}
+
 
 # ---------------------------
 # (Optional) Monitoring stack

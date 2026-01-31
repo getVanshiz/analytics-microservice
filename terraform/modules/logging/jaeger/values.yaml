@@ -1,0 +1,42 @@
+# terraform/modules/logging/jaeger/values.yaml
+replicaCount: 1
+
+resources:
+  requests: { cpu: 100m, memory: 256Mi }
+  limits:   { cpu: 500m, memory: 512Mi }
+
+# Jaeger v2 unified config (built on OTel Collector)
+config:
+  receivers:
+    otlp:
+      protocols:
+        grpc:
+          endpoint: 0.0.0.0:4317
+        http:
+          endpoint: 0.0.0.0:4318
+    jaeger:
+      protocols:
+        grpc: {}
+        thrift_http: {}
+    zipkin: {}
+
+  processors:
+    batch: {}
+
+  extensions:
+    jaeger_storage:
+      type: memory                 # For milestone demo; swap to ES/Cassandra later
+      memory:
+        max_traces: 100000
+    healthcheckv2:
+      use_v2: true
+      http:
+        endpoint: 0.0.0.0:13133
+
+  service:
+    extensions: [jaeger_storage, healthcheckv2]
+    pipelines:
+      traces:
+        receivers:  [otlp, jaeger, zipkin]
+        processors: [batch]
+        exporters:  [jaeger_storage_exporter]

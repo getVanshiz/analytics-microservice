@@ -1,4 +1,3 @@
-
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -25,8 +24,42 @@ spec:
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           ports:
             - containerPort: {{ .Values.service.port }}
-              name: {{ .Values.service.name | default "http" }}   
+              name: {{ .Values.service.name | default "http" }}
+
+          # ---- OpenTelemetry SDK env (enabled by .Values.tracing.enabled) ----
           env:
+            {{- if .Values.tracing.enabled }}
+            - name: OTEL_SERVICE_NAME
+              value: {{ default (include "analytics-service.name" .) .Values.tracing.serviceName | quote }}
+
+            # Point the app's OTel SDK to the Collector (gRPC on :4317)
+            - name: OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
+              value: {{ default "http://otel-collector-opentelemetry-collector.monitoring.svc.cluster.local:4317" .Values.tracing.endpoint | quote }}
+
+            - name: OTEL_EXPORTER_OTLP_PROTOCOL
+              value: {{ default "grpc" .Values.tracing.protocol | quote }}
+
+            - name: OTEL_TRACES_SAMPLER
+              value: {{ default "parentbased_always_on" .Values.tracing.sampler | quote }}
+
+            # Resource attributes (merge defaults with any you provide)
+            {{- $defaultAttrs := dict "service.version" .Chart.AppVersion }}
+            {{- $mergedAttrs := $defaultAttrs }}
+            {{- if .Values.tracing.resourceAttributes }}
+              {{- /* Merge user-provided map into defaults */ -}}
+              {{- range $k, $v := .Values.tracing.resourceAttributes }}
+                {{- $_ := set $mergedAttrs $k $v }}
+              {{- end }}
+            {{- end }}
+            {{- $pairs := list }}
+            {{- range $k, $v := $mergedAttrs }}
+              {{- $pairs = append $pairs (printf "%s=%v" $k $v) }}
+            {{- end }}
+            - name: OTEL_RESOURCE_ATTRIBUTES
+              value: "{{ join "," $pairs }}"
+            {{- end }}
+
+            # ---- Additional envs from values.env (keep unique names) ----
             {{- range $i, $e := .Values.env }}
             - name: {{ $e.name | quote }}
               {{- if hasKey $e "value" }}
@@ -46,3 +79,18 @@ spec:
               value: ""
               {{- end }}
             {{- end }}
+
+          # (Optional but recommended) simple health probes
+          livenessProbe:
+            httpGet:
+              path: {{ default "/health" .Values.probes.liveness.path | quote }}
+              port: {{ .Values.service.port }}
+            initialDelaySeconds: {{ default 5 .Values.probes.liveness.initialDelaySeconds }}
+            periodSeconds: {{ default 10 .Values.probes.liveness.periodSeconds }}
+
+          readinessProbe:
+            httpGet:
+              path: {{ default "/health" .Values.probes.readiness.path | quote }}
+              port: {{ .Values.service.port }}
+            initialDelaySeconds: {{ default 3 .Values.probes.readiness.initialDelaySeconds }}
+            periodSeconds: {{ default 5 .Values.probes.readiness.periodSeconds }}

@@ -21,6 +21,7 @@ RUN pip install --upgrade pip \
 
 COPY app/ /app/
 
+ENV PYTHONPATH=/app
 
 EXPOSE 8080
 
