@@ -1,0 +1,69 @@
+image:
+  repository: "otel/opentelemetry-collector-contrib"
+
+command:
+  name: "otelcol-contrib"
+
+mode: deployment
+
+resources:
+  requests: { cpu: 100m, memory: 256Mi }
+  limits:   { cpu: 500m, memory: 512Mi }
+
+config:
+  receivers:
+    otlp:
+      protocols:
+        grpc: {}
+        http: {}
+
+  processors:
+    batch: {}
+
+  exporters:
+    debug:
+      verbosity: normal
+
+    otlp:
+      endpoint: "jaeger.monitoring.svc.cluster.local:4317"
+      tls:
+        insecure: true
+
+  extensions:
+    health_check:
+      endpoint: "0.0.0.0:13133"
+
+config:
+  receivers:
+    otlp:
+      protocols:
+        grpc: {}
+        http: {}
+
+  processors:
+    batch: {}
+
+  exporters:
+    debug:
+      verbosity: normal
+
+    otlp:
+      endpoint: "jaeger.monitoring.svc.cluster.local:4317"
+      tls:
+        insecure: true
+
+  extensions:
+    health_check:
+      endpoint: "0.0.0.0:13133"
+
+  service:
+    telemetry:
+      metrics:
+        address: "0.0.0.0:8888"
+
+    extensions: [health_check]
+    pipelines:
+      traces:
+        receivers:  [otlp]
+        processors: [batch]
+        exporters:  [otlp, debug]

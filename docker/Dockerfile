@@ -1,5 +1,3 @@
-
-# syntax=docker/dockerfile:1
 FROM python:3.11-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -17,10 +15,7 @@ COPY app/requirements.txt /app/requirements.txt
 RUN pip install --upgrade pip \
     && pip install -r /app/requirements.txt
 
-
-
 COPY app/ /app/
-
 
 EXPOSE 8080
 

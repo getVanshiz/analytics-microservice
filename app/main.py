@@ -7,6 +7,7 @@ import logging
 from prometheus_flask_exporter import PrometheusMetrics
 from consumer.consumer import start_consumer
 from logging_config import setup_logging
+from otel_init import setup_tracing
 
 
 app = Flask(__name__)
@@ -49,6 +50,9 @@ def start_kafka_consumer():
 
 if __name__ == "__main__":
     setup_logging()
+
+    # Init OpenTelemetry tracing (export spans to OTEL collector / Jaeger)
+    setup_tracing(default_service_name="analytics-service")
 
     logging.info(
         "Analytics service starting",
