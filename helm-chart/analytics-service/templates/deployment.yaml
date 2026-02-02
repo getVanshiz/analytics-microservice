@@ -1,4 +1,3 @@
-
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -14,7 +13,7 @@ spec:
     metadata:
       labels:
         {{- include "analytics-service.selectorLabels" . | nindent 8 }}
-      
+        {{- include "analytics-service.labels" . | nindent 8 }}
     spec:
       containers:
         - name: {{ include "analytics-service.name" . }}
@@ -22,24 +21,26 @@ spec:
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           ports:
             - containerPort: {{ .Values.service.port }}
-              name: {{ .Values.service.name | default "http" }}   
+              name: {{ .Values.service.name | default "http" }}
+
+          # ✅ Safe env rendering (supports value + valueFrom)
           env:
-            {{- range $i, $e := .Values.env }}
-            - name: {{ $e.name | quote }}
-              {{- if hasKey $e "value" }}
-              value: {{ $e.value | quote }}
-              {{- else if hasKey $e "valueFrom" }}
-              valueFrom:
-                {{- if hasKey $e.valueFrom "secretKeyRef" }}
-                secretKeyRef:
-                  name: {{ $e.valueFrom.secretKeyRef.name | quote }}
-                  key: {{ $e.valueFrom.secretKeyRef.key | quote }}
-                {{- else if hasKey $e.valueFrom "configMapKeyRef" }}
-                configMapKeyRef:
-                  name: {{ $e.valueFrom.configMapKeyRef.name | quote }}
-                  key: {{ $e.valueFrom.configMapKeyRef.key | quote }}
-                {{- end }}
-              {{- else }}
-              value: ""
-              {{- end }}
-            {{- end }}
+            {{- toYaml .Values.env | nindent 12 }}
+
+          # ✅ Health checks (your app already has /health)
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: {{ .Values.service.port }}
+            initialDelaySeconds: 5
+            periodSeconds: 10
+
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: {{ .Values.service.port }}
+            initialDelaySeconds: 20
+            periodSeconds: 20
+
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}

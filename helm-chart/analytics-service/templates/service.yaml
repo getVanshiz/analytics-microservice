@@ -1,4 +1,3 @@
-
 apiVersion: v1
 kind: Service
 metadata:
@@ -10,6 +9,6 @@ spec:
   selector:
     {{- include "analytics-service.selectorLabels" . | nindent 4 }}
   ports:
-    - name: http
+    - name: {{ .Values.service.name | default "http" }}
       port: {{ .Values.service.port }}
       targetPort: {{ .Values.service.port }}

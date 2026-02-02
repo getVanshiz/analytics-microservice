@@ -36,3 +36,4 @@ esConfig:
     xpack.security.http.ssl.enabled: true
     xpack.security.transport.ssl.enabled: true
     node.store.allow_mmap: false
+    

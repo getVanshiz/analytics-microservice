@@ -38,4 +38,12 @@ echo "Elasticsearch is Up"
 kubectl port-forward -n observability svc/kibana-kibana 5601:5601 >/tmp/pf-kibana.log 2>&1 &
 echo "Kibana → http://localhost:5601"
 
+# Jaeger (Traces UI)
+kubectl port-forward -n monitoring svc/jaeger 16686:16686 >/tmp/pf-jaeger.log 2>&1 &
+echo "Jaeger → http://localhost:16686"
+
+# OpenTelemetry Collector (Metrics)
+kubectl port-forward -n monitoring deploy/otel-collector-opentelemetry-collector 8888:8888 >/tmp/pf-otel.log 2>&1 &
+echo "OTel Collector Metrics → http://localhost:8888/metrics"
+
 echo "All port-forwarding started!"

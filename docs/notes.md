@@ -11,7 +11,8 @@ terraform apply -target=module.monitoring
 
 # check all services
 kubectl get pods,svc,deploy -n monitoring
-kubectl get pods,svc,deploy -n team4  
+kubectl get pods,svc,deploy -n team4 
+kubectl get pods,svc,deploy -n observability 
 
 
 
@@ -27,7 +28,7 @@ kubectl get kafkatopics -n team4
 
 
 # create or update analytics service
-nerdctl --namespace k8s.io build -t analytics-service:v19 -f docker/Dockerfile .
+nerdctl --namespace k8s.io build -t analytics-service:v21 -f docker/Dockerfile .
 cd terraform
 change version in main.tf
 terraform apply -auto-approve
@@ -90,3 +91,12 @@ kubectl get secret -n observability elasticsearch-master-credentials \
   -o jsonpath='{.data.password}' | base64 --decode
 
 curl -k -u elastic:<Password> https://localhost:9200/
+
+# fix yellow to green
+- kubectl exec -n observability elasticsearch-master-0 -- \  curl -sk -u "elastic:$PW" "https://127.0.0.1:9200/_cluster/health?pretty" 
+- export PW=$(kubectl get secret -n observability elasticsearch-master-credentials -o jsonpath='{.data.password}' | base64 --decode)                    
+echo "PW length: ${#PW}"
+- kubectl exec -n observability elasticsearch-master-0 -- \  curl -sk -u "elastic:$PW" -X PUT "https://127.0.0.1:9200/_all/_settings" \
+  -H 'Content-Type: application/json' \
+  -d '{ "index.number_of_replicas": 0 }'
+- kubectl exec -n observability elasticsearch-master-0 -- \  curl -sk -u "elastic:$PW" "https://127.0.0.1:9200/_cluster/health?pretty" 

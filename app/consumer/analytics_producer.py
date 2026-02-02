@@ -4,6 +4,8 @@ import time
 import logging
 from kafka import KafkaProducer
 
+from opentelemetry import propagate, trace
+
 log = logging.getLogger("analytics-producer")
 
 BOOTSTRAP = os.getenv("KAFKA_BOOTSTRAP", "team4-kafka-kafka-bootstrap.team4.svc:9092")
@@ -30,6 +32,10 @@ def _get_producer():
 
 
 def publish_analytics(topic, lag, latency, trace_id):
+    """
+    Publishes analytics events and propagates current OTel context via Kafka headers.
+    `trace_id` is kept as your business field (optional).
+    """
     event = {
         "event_id": f"analytics-{int(time.time()*1000)}",
         "trace_id": trace_id,
@@ -41,12 +47,35 @@ def publish_analytics(topic, lag, latency, trace_id):
         "source_team": "team-4"
     }
 
+    tracer = trace.get_tracer("analytics-producer")
+
     try:
-        p = _get_producer()
-        p.send(ANALYTICS_TOPIC, event)
+        with tracer.start_as_current_span(
+            "kafka.produce",
+            attributes={
+                "messaging.system": "kafka",
+                "messaging.destination": ANALYTICS_TOPIC,
+                "messaging.destination_kind": "topic",
+                "messaging.operation": "publish",
+                "observed_topic": topic,
+            },
+        ):
+            carrier = {}
+            propagate.inject(carrier)
+            headers = [(k, str(v).encode("utf-8")) for k, v in carrier.items()]
+
+            p = _get_producer()
+
+            # Option A: fire-and-forget
+            # p.send(ANALYTICS_TOPIC, event, headers=headers)
+
+            # Option B: wait for ack (better for debugging)
+            p.send(ANALYTICS_TOPIC, event, headers=headers).get(timeout=10)
+
     except Exception:
         log.error(
             "Failed to publish analytics event",
+            exc_info=True,
             extra={"extra": {"topic": ANALYTICS_TOPIC}}
         )
         time.sleep(1)

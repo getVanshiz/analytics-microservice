@@ -118,7 +118,7 @@ module "analytics_service" {
   values = {
     image = {
       repository = "analytics-service"
-      tag        = "v19"        # ✅ NEW TAG
+      tag        = "v21"        # ✅ NEW TAG
       pullPolicy = "Never"
     }
     replicaCount = 1
@@ -199,6 +199,19 @@ module "monitoring" {
   depends_on = [module.ns_monitoring]
 }
 
+module "jaeger" {
+  source       = "./modules/logging/jaeger"
+  release_name = "jaeger"
+  namespace    = module.ns_monitoring.name
+  depends_on   = [module.ns_monitoring]
+}
+
+module "opentelemetry" {
+  source       = "./modules/logging/opentelemetry"
+  release_name = "otel-collector"
+  namespace    = module.ns_monitoring.name
+  depends_on   = [module.jaeger]
+}
 
 # Example ServiceMonitor for analytics-service (if monitoring enabled)
 resource "kubernetes_manifest" "analytics_service_monitor" {

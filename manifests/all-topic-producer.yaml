@@ -1,4 +1,3 @@
-
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -20,106 +19,160 @@ spec:
           command: ["bash", "-lc"]
           args:
             - |
-                pip install --no-cache-dir kafka-python && \
-                python - << 'PY'
-                import json, time, uuid, os, random
-                from kafka import KafkaProducer
+              pip install --no-cache-dir \
+                kafka-python \
+                opentelemetry-api opentelemetry-sdk \
+                opentelemetry-exporter-otlp-proto-grpc && \
+              python - << 'PY'
+              import json, time, uuid, os, random
+              from datetime import datetime, timezone, timedelta
+              from kafka import KafkaProducer
 
-                BOOTSTRAP = os.getenv(
-                    "KAFKA_BOOTSTRAP",
-                    "team4-kafka-kafka-bootstrap.team4.svc:9092"
-                )
+              # OpenTelemetry
+              from opentelemetry import trace, propagate
+              from opentelemetry.sdk.resources import Resource
+              from opentelemetry.sdk.trace import TracerProvider
+              from opentelemetry.sdk.trace.export import BatchSpanProcessor
+              from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
 
-                TOPICS = [
-                    "user-events",
-                    "order-events",
-                    "notification-events"
-                ]
+              BOOTSTRAP = os.getenv("KAFKA_BOOTSTRAP", "team4-kafka-kafka-bootstrap.team4.svc:9092")
 
-                producer = KafkaProducer(
-                    bootstrap_servers=[BOOTSTRAP],
-                    value_serializer=lambda v: json.dumps(v).encode("utf-8"),
-                    acks="all",
-                    retries=5
-                )
+              # For OTLP gRPC exporter, prefer host:port (no http://)
+              OTLP_ENDPOINT = os.getenv(
+                  "OTEL_EXPORTER_OTLP_ENDPOINT",
+                  "otel-collector-opentelemetry-collector.monitoring.svc.cluster.local:4317"
+              )
+              SERVICE_NAME = os.getenv("OTEL_SERVICE_NAME", "all-topics-producer")
+              RESOURCE_ATTRS = os.getenv("OTEL_RESOURCE_ATTRIBUTES", "team=team4,app=all-topics-producer")
 
-                print("[producer] Producing to ALL topics with trace_id enabled")
+              TOPICS = ["user-events", "order-events", "notification-events"]
 
-                def make_user_event():
-                    return {
-                        "event_id": str(uuid.uuid4()),
-                        "trace_id": str(uuid.uuid4()),  # ✅ TRACE ORIGIN
-                        "event_type": random.choice([
-                            "user_created",
-                            "user_updated",
-                            "user_deleted"
-                        ]),
-                        "source_team": "team-1",
-                        "payload": {
-                            "user_id": str(uuid.uuid4()),
-                            "email": f"user{random.randint(1,999)}@example.com",
-                            "name": random.choice(["Vanshika", "Aarav", "Neha", "Ruhi"])
-                        },
-                        "produced_at": int(time.time() * 1000)
-                    }
+              # ---- OTel init ----
+              attrs = {}
+              for pair in RESOURCE_ATTRS.split(","):
+                  pair = pair.strip()
+                  if pair and "=" in pair:
+                      k, v = pair.split("=", 1)
+                      attrs[k.strip()] = v.strip()
 
-                def make_order_event():
-                    return {
-                        "event_id": str(uuid.uuid4()),
-                        "trace_id": str(uuid.uuid4()),  # ✅ TRACE ORIGIN
-                        "event_type": random.choice([
-                            "order_created",
-                            "order_confirmed",
-                            "order_shipped"
-                        ]),
-                        "source_team": "team-2",
-                        "payload": {
-                            "order_id": str(uuid.uuid4()),
-                            "user_id": str(uuid.uuid4()),
-                            "amount": random.randint(100, 1500),
-                            "currency": "INR"
-                        },
-                        "produced_at": int(time.time() * 1000)
-                    }
+              resource = Resource.create({"service.name": SERVICE_NAME, **attrs})
+              provider = TracerProvider(resource=resource)
+              trace.set_tracer_provider(provider)
 
-                def make_notification_event():
-                    return {
-                        "event_id": str(uuid.uuid4()),
-                        "trace_id": str(uuid.uuid4()),  # ✅ TRACE ORIGIN
-                        "event_type": random.choice([
-                            "notification_sent",
-                            "notification_failed"
-                        ]),
-                        "source_team": "team-3",
-                        "payload": {
-                            "order_id": str(uuid.uuid4()),
-                            "user_id": str(uuid.uuid4()),
-                            "channel": random.choice(["email", "sms"])
-                        },
-                        "produced_at": int(time.time() * 1000)
-                    }
+              exporter = OTLPSpanExporter(endpoint=OTLP_ENDPOINT, insecure=True)
+              provider.add_span_processor(BatchSpanProcessor(exporter))
+              tracer = trace.get_tracer("all-topics-producer")
 
-                while True:
-                    topic = random.choice(TOPICS)
+              producer = KafkaProducer(
+                  bootstrap_servers=[BOOTSTRAP],
+                  value_serializer=lambda v: json.dumps(v).encode("utf-8"),
+                  acks="all",
+                  retries=5
+              )
 
-                    if topic == "user-events":
-                        event = make_user_event()
-                    elif topic == "order-events":
-                        event = make_order_event()
-                    else:
-                        event = make_notification_event()
+              IST = timezone(timedelta(hours=5, minutes=30))
 
-                    md = producer.send(topic, event).get(timeout=10)
+              def iso_ist_now():
+                  dt = datetime.now(IST)
+                  # Note: strict ISO would be +05:30 without trailing Z, but keeping your format:
+                  return dt.isoformat(timespec="microseconds") + "Z"
 
-                    print(
-                        f"[{topic}] → {event['event_type']} "
-                        f"trace_id={event['trace_id']} "
-                        f"offset={md.offset}",
-                        flush=True
-                    )
+              def occurred_at_format():
+                  dt = datetime.now(IST)
+                  return dt.strftime("%Y-%m-%d %H:%M:%S IST")
 
-                    time.sleep(1)
-                PY
+              def make_user_event():
+                  now = iso_ist_now()
+                  user_id = random.randint(1000, 9999)
+                  return {
+                      "user_id": user_id,
+                      "email": f"user{user_id}@example.com",
+                      "status": random.choice(["ACTIVE", "INACTIVE", "SUSPENDED"]),
+                      "created_at": now,
+                      "updated_at": now
+                  }
+
+              def make_order_event():
+                  now = iso_ist_now()
+                  return {
+                      "id": str(uuid.uuid4()),
+                      "user_id": random.choice(["user1", "user2", "user3", "user4"]),
+                      "item": random.choice(["watch", "phone", "laptop", "shoes"]),
+                      "quantity": random.randint(1, 5),
+                      "note": random.choice(["fast", "gift wrap", "handle with care", ""]),
+                      "status": random.choice(["CREATED", "CONFIRMED", "SHIPPED", "CANCELLED"]),
+                      "created_at": now,
+                      "updated_at": now
+                  }
+
+              def make_notification_event():
+                  order_id = f"order_{random.randint(1000, 9999)}"
+                  user_id = f"user_{random.randint(100, 999)}"
+                  channel = random.choice(["SMS", "EMAIL", "PUSH"])
+                  template = random.choice(["ORDER_CONFIRMED", "ORDER_SHIPPED", "ORDER_CANCELLED"])
+                  status = random.choice(["SENT", "FAILED"])
+                  msg = f"Your order {order_id} has been {template.split('_',1)[1].lower()}."
+
+                  return {
+                      "event_name": "notification_sent" if status == "SENT" else "notification_failed",
+                      "event_version": "1.0",
+                      "event_id": str(uuid.uuid4()),
+                      "occurred_at": occurred_at_format(),
+                      "producer": "notification-service",
+                      "data": {
+                          "notification_id": f"notif_{random.randint(1000,9999)}",
+                          "user_id": user_id,
+                          "order_id": order_id,
+                          "channel": channel,
+                          "template": template,
+                          "message": msg,
+                          "status": status
+                      }
+                  }
+
+              print("[producer] Producing schema-correct events with OTel tracing via Kafka headers")
+
+              while True:
+                  topic = random.choice(TOPICS)
+
+                  if topic == "user-events":
+                      payload = make_user_event()
+                  elif topic == "order-events":
+                      payload = make_order_event()
+                  else:
+                      payload = make_notification_event()
+
+                  with tracer.start_as_current_span(
+                      "kafka.produce",
+                      attributes={
+                          "messaging.system": "kafka",
+                          "messaging.destination": topic,
+                          "messaging.destination_kind": "topic",
+                          "messaging.operation": "publish",
+                      }
+                  ) as span:
+                      carrier = {}
+                      propagate.inject(carrier)
+                      headers = [(k, v.encode("utf-8")) for k, v in carrier.items()]
+
+                      md = producer.send(topic, value=payload, headers=headers).get(timeout=10)
+
+                      print(
+                          f"[{topic}] sent offset={md.offset} partition={md.partition} "
+                          f"otel_trace_id={format(span.get_span_context().trace_id, '032x')}",
+                          flush=True
+                      )
+
+                  time.sleep(1)
+              PY
           env:
             - name: KAFKA_BOOTSTRAP
               value: "team4-kafka-kafka-bootstrap.team4.svc:9092"
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: "otel-collector-opentelemetry-collector.monitoring.svc.cluster.local:4317"
+            - name: OTEL_SERVICE_NAME
+              value: "all-topics-producer"
+            - name: OTEL_RESOURCE_ATTRIBUTES
+              value: "team=team4,app=all-topics-producer"
+            - name: SCHEMA_MODE
+              value: "legacy"
