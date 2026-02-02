@@ -118,7 +118,7 @@ module "analytics_service" {
   values = {
     image = {
       repository = "analytics-service"
-      tag        = "v14"        # ✅ NEW TAG
+      tag        = "v19"        # ✅ NEW TAG
       pullPolicy = "Never"
     }
     replicaCount = 1
@@ -309,4 +309,40 @@ resource "kubernetes_manifest" "kafka_exporter_sm" {
     module.kafka,
     module.monitoring
   ]
+}
+
+
+module "ns_observability" {
+  source = "./modules/namespace"
+  name   = "observability"
+}
+
+module "elasticsearch" {
+  source       = "./modules/logging/elasticsearch"
+  release_name = "elasticsearch"
+  namespace    = module.ns_observability.name
+  
+  depends_on   = [module.ns_observability]
+
+}
+
+module "kibana" {
+  source       = "./modules/logging/kibana"
+  release_name = "kibana"
+  namespace    = module.ns_observability.name
+  depends_on   = [module.elasticsearch]   # ✅ enforce order here
+}
+
+module "filebeat" {
+  source       = "./modules/logging/filebeat"
+  release_name = "filebeat"
+  namespace    = module.ns_observability.name
+  depends_on   = [module.elasticsearch]   # ✅ enforce order here
+}
+
+module "kibana_objects" {
+  source    = "./modules/logging/kibana-objects"
+  name      = "kibana-objects"
+  namespace = module.ns_observability.name
+  depends_on = [module.kibana]            # ✅ enforce order here
 }

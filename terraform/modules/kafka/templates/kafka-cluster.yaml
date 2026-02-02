@@ -1,19 +1,15 @@
-
-apiVersion: kafka.strimzi.io/v1beta2
+apiVersion: kafka.strimzi.io/v1beta2   # you can keep v1beta2 since your CRD serves both
 kind: Kafka
 metadata:
   name: ${cluster}
   namespace: ${namespace}
 spec:
   kafka:
-    replicas: 1
     listeners:
       - name: plain
         port: 9092
         type: internal
         tls: false
-    storage:
-      type: ephemeral
     config:
       offsets.topic.replication.factor: 1
       transaction.state.log.replication.factor: 1

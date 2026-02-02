@@ -1,0 +1,38 @@
+replicas: 1
+
+esJavaOpts: "-Xms1g -Xmx1g"
+
+
+volumePermissions:
+  enabled: true
+
+# --- Ensure pod can read/write the PVC as uid 1000 (elasticsearch user) ---
+podSecurityContext:
+  fsGroup: 1000
+
+
+# Local dev resources
+resources:
+  requests:
+    cpu: "200m"
+    memory: "1.5Gi"
+  limits:
+    cpu: "1"
+    memory: "3Gi"
+
+# PVC works on Rancher Desktop's local-path
+volumeClaimTemplate:
+  storageClassName: "local-path"     # kubectl get storageclass to confirm
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 10Gi
+
+# Remain secure + single-node + mmap off for macOS/containerd
+
+esConfig:
+  elasticsearch.yml: |
+    xpack.security.enabled: true
+    xpack.security.http.ssl.enabled: true
+    xpack.security.transport.ssl.enabled: true
+    node.store.allow_mmap: false

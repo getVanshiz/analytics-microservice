@@ -38,11 +38,8 @@ env:
       secretKeyRef:
         name: influxdb-auth
         key: token
-
-podAnnotations:
-  prometheus.io/scrape: "true"
-  prometheus.io/path: "/metrics"
-  prometheus.io/port: "8080"
+  - name: APP_VERSION
+    value: "0.1.0"
 
 resources: {}
 
