@@ -1,0 +1,53 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prometheus-kafka-exporter
+  namespace: team4
+  labels:
+    app.kubernetes.io/name: kafka-exporter
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: kafka-exporter
+      strimzi.io/cluster: team4-kafka
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: kafka-exporter
+        strimzi.io/cluster: team4-kafka
+    spec:
+      containers:
+      - name: kafka-exporter
+        image: danielqsj/kafka-exporter:latest
+        imagePullPolicy: IfNotPresent
+        args:
+          - "--kafka.server=team4-kafka-kafka-bootstrap.team4.svc.cluster.local:9092"
+        ports:
+        - name: prometheus
+          containerPort: 9308
+          protocol: TCP
+        env:
+        - name: KAFKA_BROKERS
+          value: "team4-kafka-kafka-bootstrap.team4.svc.cluster.local:9092"
+        livenessProbe:
+          httpGet:
+            path: /metrics
+            port: prometheus
+          initialDelaySeconds: 15
+          periodSeconds: 10
+          timeoutSeconds: 5
+        readinessProbe:
+          httpGet:
+            path: /metrics
+            port: prometheus
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 5
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "500m"

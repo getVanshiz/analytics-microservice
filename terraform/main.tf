@@ -1,26 +1,38 @@
+################################
+# Root stack for your platform #
+################################
 
 locals {
   namespace     = "team4"
   kafka_cluster = "team4-kafka"
 }
 
+# --- Namespaces ---
 
-# Create dedicated namespace for Strimzi operator
+# Dedicated namespace for Strimzi operator
 resource "kubernetes_namespace_v1" "strimzi" {
-  metadata {
-    name = "strimzi"
-  }
+  metadata { name = "strimzi" }
 }
 
-
-# Namespace
+# App / Team namespace
 module "namespace" {
   source = "./modules/namespace"
   name   = local.namespace
 }
 
+# Monitoring namespace
+module "ns_monitoring" {
+  source = "./modules/namespace"
+  name   = "monitoring"
+}
 
+# Observability namespace for ES/Kibana/Filebeat (optional)
+module "ns_observability" {
+  source = "./modules/namespace"
+  name   = "observability"
+}
 
+# --- Strimzi operator & Kafka ---
 
 module "strimzi_operator" {
   source        = "./modules/strimzi-operator"
@@ -28,17 +40,16 @@ module "strimzi_operator" {
   chart_version = "0.49.1"
 
   values = {
-    watchNamespaces = ["team4"]
+    watchNamespaces = [local.namespace]
   }
 
-  depends_on = [kubernetes_namespace_v1.strimzi]
+  depends_on = [
+    kubernetes_namespace_v1.strimzi,  # operator namespace
+    module.namespace                  # ensure "team4" exists before install since it's watched
+  ]
 }
 
-
-
-
-
-# Kafka CRs (KRaft, single-broker)
+# Kafka (KRaft, single-broker)
 module "kafka" {
   source    = "./modules/kafka"
   namespace = module.namespace.name
@@ -46,14 +57,13 @@ module "kafka" {
   depends_on = [module.strimzi_operator]
 }
 
-# Kafka CRs (KRaft, single-broker)
-
+# Topics
 module "kafka_topic_user_events" {
   source    = "./modules/kafka-topic"
   namespace = module.namespace.name
   cluster   = local.kafka_cluster
-  name      = "user-events"            # <-- FIXED
-  topicName = "user-events"            # <-- real Kafka topic name
+  name      = "user-events"
+  topicName = "user-events"
   depends_on = [module.kafka]
 }
 
@@ -75,7 +85,6 @@ module "kafka_topic_notification_events" {
   depends_on = [module.kafka]
 }
 
-
 module "kafka_topic_analytics_events" {
   source    = "./modules/kafka-topic"
   namespace = module.namespace.name
@@ -85,8 +94,8 @@ module "kafka_topic_analytics_events" {
   depends_on = [module.kafka]
 }
 
+# --- InfluxDB ---
 
-# InfluxDB v2 (Helm)
 module "influxdb2" {
   source    = "./modules/influxdb2"
   namespace = module.namespace.name
@@ -107,18 +116,29 @@ module "influxdb2" {
   depends_on = [module.namespace]
 }
 
-# Analytics service (local Helm chart)
+# Influx token secret (Terraform-managed)
+resource "kubernetes_secret_v1" "influxdb_auth" {
+  metadata {
+    name      = "influxdb-auth"
+    namespace = module.namespace.name
+  }
+  data = {
+    token = "team4-dev-admin-token"
+  }
+  type = "Opaque"
+}
+
+# --- Your analytics service ---
 module "analytics_service" {
   source     = "./modules/analytics-service"
   namespace  = module.namespace.name
   name       = "analytics-service"
   chart_path = "${path.module}/../helm-chart/analytics-service"
 
-  
   values = {
     image = {
       repository = "analytics-service"
-      tag        = "v21"        # ✅ NEW TAG
+      tag        = "v28"
       pullPolicy = "Never"
     }
     replicaCount = 1
@@ -138,20 +158,13 @@ module "analytics_service" {
   }
 
   depends_on = [
+    kubernetes_secret_v1.influxdb_auth,
     module.influxdb2,
     module.kafka
   ]
 }
 
-# ---------------------------
-# (Optional) Monitoring stack
-# ---------------------------
-module "ns_monitoring" {
-  source = "./modules/namespace"
-  name   = "monitoring"
-}
-
-
+# --- Monitoring stack (kube-prometheus-stack) ---
 
 module "monitoring" {
   source        = "./modules/monitoring"
@@ -159,7 +172,13 @@ module "monitoring" {
   name          = "kube-prometheus-stack"
   chart_version = "62.7.0"
 
+  # IMPORTANT: enable CRDs and the CRD upgrade job
   values = {
+    crds = {
+      enabled    = false
+      upgradeJob = { enabled = true }
+    }
+
     nodeExporter = { enabled = false }
 
     grafana = {
@@ -173,14 +192,14 @@ module "monitoring" {
           access = "proxy"
           url    = "http://${module.influxdb2.release_name}.${module.influxdb2.namespace}.svc.cluster.local"
           jsonData = {
-            version        = "Flux"     # Flux query language
-            organization   = "team4"    # <-- CHANGED
-            defaultBucket  = "analytics" # <-- CHANGED
+            version         = "Flux"
+            organization    = "team4"
+            defaultBucket   = "analytics"
             httpHeaderName1 = "Authorization"
-            tlsSkipVerify  = true
+            tlsSkipVerify   = true
           }
           secureJsonData = {
-            httpHeaderValue1 = "Token team4-dev-admin-token"  # <-- Prefer using a Secret (see below)
+            httpHeaderValue1 = "Token team4-dev-admin-token"
           }
         }
       ]
@@ -188,8 +207,64 @@ module "monitoring" {
 
     prometheus = {
       prometheusSpec = {
+        web = {
+          httpConfig = {}
+        }
+        storageSpec = null 
         retention      = "5d"
         scrapeInterval = "30s"
+        
+        # Add resource requests and limits to prevent OOM/slowness
+        resources = {
+          requests = {
+            cpu    = "250m"
+            memory = "512Mi"
+          }
+          limits = {
+            cpu    = "1000m"
+            memory = "1Gi"
+          }
+        }
+        
+        # Increase probe timeouts and initial delays since Prometheus is slow to respond
+        livenessProbe = {
+          httpGet = {
+            path = "/-/healthy"
+            port = "http-web"
+            scheme = "HTTP"
+          }
+          initialDelaySeconds = 60
+          timeoutSeconds = 10
+          periodSeconds = 15
+          successThreshold = 1
+          failureThreshold = 5
+        }
+        
+        readinessProbe = {
+          httpGet = {
+            path = "/-/ready"
+            port = "http-web"
+            scheme = "HTTP"
+          }
+          initialDelaySeconds = 60
+          timeoutSeconds = 10
+          periodSeconds = 15
+          successThreshold = 1
+          failureThreshold = 3
+        }
+        
+        startupProbe = {
+          httpGet = {
+            path = "/-/ready"
+            port = "http-web"
+            scheme = "HTTP"
+          }
+          initialDelaySeconds = 0
+          timeoutSeconds = 10
+          periodSeconds = 15
+          successThreshold = 1
+          failureThreshold = 60
+        }
       }
     }
 
@@ -199,6 +274,7 @@ module "monitoring" {
   depends_on = [module.ns_monitoring]
 }
 
+# --- Jaeger & OTel ---
 module "jaeger" {
   source       = "./modules/logging/jaeger"
   release_name = "jaeger"
@@ -213,7 +289,8 @@ module "opentelemetry" {
   depends_on   = [module.jaeger]
 }
 
-# Example ServiceMonitor for analytics-service (if monitoring enabled)
+# --- ServiceMonitors (created only after CRDs exist) ---
+
 resource "kubernetes_manifest" "analytics_service_monitor" {
   manifest = {
     apiVersion = "monitoring.coreos.com/v1"
@@ -233,7 +310,7 @@ resource "kubernetes_manifest" "analytics_service_monitor" {
       }
       endpoints = [
         {
-          port     = "http"   # ensure Service has a named port "http"
+          port     = "http"
           path     = "/metrics"
           interval = "30s"
         }
@@ -243,9 +320,12 @@ resource "kubernetes_manifest" "analytics_service_monitor" {
       }
     }
   }
-  depends_on = [module.analytics_service]
-}
 
+  depends_on = [
+    # module.analytics_service,  # Disabled for now
+    module.monitoring   # ensure CRDs are present before creating SMs
+  ]
+}
 
 resource "kubernetes_manifest" "influxdb_sm" {
   manifest = {
@@ -261,8 +341,8 @@ resource "kubernetes_manifest" "influxdb_sm" {
     spec = {
       selector = {
         matchLabels = {
-          "app.kubernetes.io/name"      = "influxdb2"
-          "app.kubernetes.io/instance"  = "influxdb2"
+          "app.kubernetes.io/name"     = "influxdb2"
+          "app.kubernetes.io/instance" = "influxdb2"
         }
       }
       endpoints = [
@@ -284,9 +364,6 @@ resource "kubernetes_manifest" "influxdb_sm" {
   ]
 }
 
-
-
-
 resource "kubernetes_manifest" "kafka_exporter_sm" {
   manifest = {
     apiVersion = "monitoring.coreos.com/v1"
@@ -301,13 +378,13 @@ resource "kubernetes_manifest" "kafka_exporter_sm" {
     spec = {
       selector = {
         matchLabels = {
-          "strimzi.io/cluster" = local.kafka_cluster
-          "app.kubernetes.io/name" = "kafka-exporter"
+          "strimzi.io/cluster"        = local.kafka_cluster
+          "app.kubernetes.io/name"    = "kafka-exporter"
         }
       }
       endpoints = [
         {
-          port     = "prometheus" # STRIMZI DEFAULT PORT
+          port     = "prometheus"
           interval = "30s"
           path     = "/metrics"
         }
@@ -319,43 +396,36 @@ resource "kubernetes_manifest" "kafka_exporter_sm" {
   }
 
   depends_on = [
-    module.kafka,
+    # module.kafka,  # Disabled for now
     module.monitoring
   ]
 }
 
-
-module "ns_observability" {
-  source = "./modules/namespace"
-  name   = "observability"
-}
-
+# --- Elasticsearch, Kibana, Filebeat ---
 module "elasticsearch" {
   source       = "./modules/logging/elasticsearch"
   release_name = "elasticsearch"
   namespace    = module.ns_observability.name
-  
   depends_on   = [module.ns_observability]
-
 }
 
 module "kibana" {
   source       = "./modules/logging/kibana"
   release_name = "kibana"
   namespace    = module.ns_observability.name
-  depends_on   = [module.elasticsearch]   # ✅ enforce order here
+  depends_on   = [module.elasticsearch]
 }
 
 module "filebeat" {
   source       = "./modules/logging/filebeat"
   release_name = "filebeat"
   namespace    = module.ns_observability.name
-  depends_on   = [module.elasticsearch]   # ✅ enforce order here
+  depends_on   = [module.elasticsearch]
 }
 
 module "kibana_objects" {
-  source    = "./modules/logging/kibana-objects"
-  name      = "kibana-objects"
-  namespace = module.ns_observability.name
-  depends_on = [module.kibana]            # ✅ enforce order here
+  source     = "./modules/logging/kibana-objects"
+  name       = "kibana-objects"
+  namespace  = module.ns_observability.name
+  depends_on = [module.kibana]
 }

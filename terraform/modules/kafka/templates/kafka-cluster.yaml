@@ -1,10 +1,11 @@
-apiVersion: kafka.strimzi.io/v1beta2   # you can keep v1beta2 since your CRD serves both
+apiVersion: kafka.strimzi.io/v1beta2
 kind: Kafka
 metadata:
   name: ${cluster}
   namespace: ${namespace}
 spec:
   kafka:
+    version: 4.0.1
     listeners:
       - name: plain
         port: 9092
@@ -17,10 +18,4 @@ spec:
       default.replication.factor: 1
       min.insync.replicas: 1
 
-  kafkaExporter:
-    topicRegex: ".*"
-    groupRegex: ".*"
-
-  entityOperator:
-    topicOperator: {}
-    userOperator: {}
+  entityOperator: {}

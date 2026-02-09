@@ -1,5 +1,7 @@
 
-# Node pool / dual role (uses template file)
+# Note: Strimzi 0.49.1 REQUIRES KafkaNodePool for v1beta2 API
+# Deploy KafkaNodePool first, then Kafka
+
 resource "kubernetes_manifest" "kafka_nodepool_dualrole" {
   manifest = yamldecode(
     templatefile("${path.module}/templates/kafka-nodepool.yaml", {
@@ -7,9 +9,11 @@ resource "kubernetes_manifest" "kafka_nodepool_dualrole" {
       cluster   = var.cluster
     })
   )
+  
+  depends_on = []
 }
 
-# Kafka cluster (depends on nodepool)
+# Kafka cluster WITHOUT replicas/storage (rely on KafkaNodePool)
 resource "kubernetes_manifest" "kafka_cluster" {
   manifest = yamldecode(
     templatefile("${path.module}/templates/kafka-cluster.yaml", {
@@ -22,6 +26,7 @@ resource "kubernetes_manifest" "kafka_cluster" {
     name            = "terraform"
     force_conflicts = true
   }
+  
   depends_on = [kubernetes_manifest.kafka_nodepool_dualrole]
 }
 

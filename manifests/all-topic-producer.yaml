@@ -25,6 +25,7 @@ spec:
                 opentelemetry-exporter-otlp-proto-grpc && \
               python - << 'PY'
               import json, time, uuid, os, random
+              from collections import deque
               from datetime import datetime, timezone, timedelta
               from kafka import KafkaProducer
 
@@ -72,21 +73,31 @@ spec:
 
               IST = timezone(timedelta(hours=5, minutes=30))
 
+              # ---- Correlation pools (for realistic cross-topic linking) ----
+              recent_users = deque(maxlen=500)               # user_id strings like "user_1234"
+              recent_orders = deque(maxlen=200)              # tuples: (order_id_uuid, user_id)
+
               def iso_ist_now():
                   dt = datetime.now(IST)
-                  # Note: strict ISO would be +05:30 without trailing Z, but keeping your format:
+                  # Keep your original format (with trailing Z) to match consumer parsing:
                   return dt.isoformat(timespec="microseconds") + "Z"
 
               def occurred_at_format():
                   dt = datetime.now(IST)
                   return dt.strftime("%Y-%m-%d %H:%M:%S IST")
 
+              def rand_user_id():
+                  # Unified format used in all events
+                  return f"user_{random.randint(1000, 9999)}"
+
               def make_user_event():
                   now = iso_ist_now()
-                  user_id = random.randint(1000, 9999)
+                  user_id = rand_user_id()
+                  # Track user in pool for downstream order/notification correlation
+                  recent_users.append(user_id)
                   return {
                       "user_id": user_id,
-                      "email": f"user{user_id}@example.com",
+                      "email": f"{user_id}@example.com",
                       "status": random.choice(["ACTIVE", "INACTIVE", "SUSPENDED"]),
                       "created_at": now,
                       "updated_at": now
@@ -94,9 +105,18 @@ spec:
 
               def make_order_event():
                   now = iso_ist_now()
+                  # Prefer a real, recently-seen user; else create one and seed the pool
+                  user_id = random.choice(list(recent_users)) if recent_users else rand_user_id()
+                  if user_id not in recent_users:
+                      recent_users.append(user_id)
+
+                  order_id = str(uuid.uuid4())
+                  # Keep for notifications to reference
+                  recent_orders.append((order_id, user_id))
+
                   return {
-                      "id": str(uuid.uuid4()),
-                      "user_id": random.choice(["user1", "user2", "user3", "user4"]),
+                      "id": order_id,
+                      "user_id": user_id,
                       "item": random.choice(["watch", "phone", "laptop", "shoes"]),
                       "quantity": random.randint(1, 5),
                       "note": random.choice(["fast", "gift wrap", "handle with care", ""]),
@@ -106,12 +126,19 @@ spec:
                   }
 
               def make_notification_event():
-                  order_id = f"order_{random.randint(1000, 9999)}"
-                  user_id = f"user_{random.randint(100, 999)}"
+                  # Prefer to correlate to a real recent order 80% of the time
+                  correlate = (len(recent_orders) > 0 and random.random() < 0.8)
+                  if correlate:
+                      order_id, user_id = random.choice(list(recent_orders))
+                  else:
+                      # Fallback: use a known user if we have one; otherwise synthesize
+                      user_id = random.choice(list(recent_users)) if recent_users else rand_user_id()
+                      order_id = str(uuid.uuid4())  # may not be known to consumer, but okay occasionally
+
                   channel = random.choice(["SMS", "EMAIL", "PUSH"])
-                  template = random.choice(["ORDER_CONFIRMED", "ORDER_SHIPPED", "ORDER_CANCELLED"])
+                  stage_template = random.choice(["ORDER_CONFIRMED", "ORDER_SHIPPED", "ORDER_CANCELLED"])
                   status = random.choice(["SENT", "FAILED"])
-                  msg = f"Your order {order_id} has been {template.split('_',1)[1].lower()}."
+                  msg = f"Your order {order_id} has been {stage_template.split('_',1)[1].lower()}."
 
                   return {
                       "event_name": "notification_sent" if status == "SENT" else "notification_failed",
@@ -121,16 +148,16 @@ spec:
                       "producer": "notification-service",
                       "data": {
                           "notification_id": f"notif_{random.randint(1000,9999)}",
-                          "user_id": user_id,
-                          "order_id": order_id,
+                          "user_id": user_id,       # unified user_id format
+                          "order_id": order_id,     # UUID (matches order id when correlated)
                           "channel": channel,
-                          "template": template,
+                          "template": stage_template,
                           "message": msg,
                           "status": status
                       }
                   }
 
-              print("[producer] Producing schema-correct events with OTel tracing via Kafka headers")
+              print("[producer] Producing schema-correct, *correlated* events with OTel tracing via Kafka headers")
 
               while True:
                   topic = random.choice(TOPICS)

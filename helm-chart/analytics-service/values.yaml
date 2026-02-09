@@ -61,5 +61,7 @@ serviceMonitor:
   scrapePath: /metrics
   labels:
     release: kube-prometheus-stack
+  crds:
+    create: true
 
 labels: {}

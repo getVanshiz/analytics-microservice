@@ -12,5 +12,5 @@ spec:
     strimzi.io/cluster: team4-kafka
   ports:
     - name: prometheus
-      port: 9404
-      targetPort: 9404
+      port: 9308
+      targetPort: 9308
