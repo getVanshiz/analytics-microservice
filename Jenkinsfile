@@ -30,18 +30,18 @@ spec:
       }
     }
     
-    stage('Configure Terraform for K8s') {
+    stage('Configure Terraform') {
       steps {
         container('terraform') {
           dir('terraform') {
             sh '''
-              # In-cluster auth setup (Jenkins pod ke andar se K8s access)
               cat > providers_override.tf <<'EOF'
 provider "kubernetes" {
   host                   = "https://kubernetes.default.svc"
   token                  = file("/var/run/secrets/kubernetes.io/serviceaccount/token")
   cluster_ca_certificate = file("/var/run/secrets/kubernetes.io/serviceaccount/ca.crt")
 }
+
 provider "helm" {
   kubernetes {
     host                   = "https://kubernetes.default.svc"
@@ -66,15 +66,30 @@ EOF
       }
     }
     
-    stage('Import Analytics Service') {
+    stage('Import ALL Existing Resources') {
       steps {
         container('terraform') {
           dir('terraform') {
             sh '''
-              # Existing Helm release ko import karo state mein
-              terraform import \
-                module.analytics_service.helm_release.app \
-                ${NAMESPACE}/analytics-service || echo "Already imported"
+              # Import namespaces
+              terraform import kubernetes_namespace_v1.strimzi strimzi || echo "Already imported"
+              terraform import module.namespace.kubernetes_namespace_v1.ns team4 || echo "Already imported"
+              
+              # Import Strimzi operator
+              terraform import module.strimzi_operator.helm_release.strimzi strimzi/strimzi-operator || echo "Already imported"
+              
+              # Import Kafka resources (skip if fails)
+              terraform import module.kafka.kubernetes_manifest.kafka_nodepool_dualrole \
+                "apiVersion=kafka.strimzi.io/v1beta2,kind=KafkaNodePool,namespace=team4,name=team4-kafka-np-dual" || echo "Skip"
+              
+              terraform import module.kafka.kubernetes_manifest.kafka_cluster \
+                "apiVersion=kafka.strimzi.io/v1beta2,kind=Kafka,namespace=team4,name=team4-kafka" || echo "Skip"
+              
+              # Import InfluxDB
+              terraform import module.influxdb2.helm_release.influxdb2 team4/influxdb2 || echo "Already imported"
+              
+              # Import Analytics Service (MAIN TARGET)
+              terraform import module.analytics_service.helm_release.app team4/analytics-service || echo "Already imported"
             '''
           }
         }
@@ -86,7 +101,6 @@ EOF
         container('terraform') {
           dir('terraform') {
             sh '''
-              # Sirf analytics service ka plan dekho
               terraform plan \
                 -target=module.analytics_service.helm_release.app \
                 -out=analytics.tfplan
@@ -116,10 +130,6 @@ EOF
             echo "✅ Waiting for rollout..."
             kubectl rollout status deploy/analytics-service-analytics-service \
               -n ${NAMESPACE} --timeout=3m
-            
-            echo "🏥 Health check..."
-            sleep 5
-            kubectl get svc analytics-service-analytics-service -n ${NAMESPACE}
           '''
         }
       }
@@ -149,4 +159,3 @@ EOF
     }
   }
 }
-
