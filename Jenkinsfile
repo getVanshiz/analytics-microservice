@@ -30,7 +30,6 @@ spec:
       steps {
         checkout scm
         sh 'ls -la'
-        sh 'echo "Checking terraform directory..."'
         sh 'ls -la terraform/'
       }
     }
@@ -45,11 +44,15 @@ spec:
       }
     }
     
-    stage('Terraform Plan') {
+    stage('Import Existing Resources') {
       steps {
         container('terraform') {
           dir('terraform') {
-            sh 'terraform plan -target=module.analytics_service'
+            sh '''
+              echo "Importing existing resources..."
+              terraform import -input=false kubernetes_namespace_v1.strimzi strimzi 2>/dev/null || echo "strimzi namespace already imported or doesn't exist"
+              terraform import -input=false module.namespace.kubernetes_namespace_v1.ns team4 2>/dev/null || echo "team4 namespace already imported or doesn't exist"
+            '''
           }
         }
       }
@@ -59,7 +62,11 @@ spec:
       steps {
         container('terraform') {
           dir('terraform') {
-            sh 'terraform apply -target=module.analytics_service -auto-approve'
+            sh '''
+              terraform apply \
+                -target=module.analytics_service.helm_release.app \
+                -auto-approve
+            '''
           }
         }
       }
@@ -69,11 +76,11 @@ spec:
       steps {
         container('kubectl') {
           sh '''
-            echo "Waiting for deployment to stabilize..."
+            echo "⏳ Waiting for deployment..."
             sleep 15
-            echo "Checking pods in namespace ${NAMESPACE}..."
+            echo "📋 Checking pods..."
             kubectl get pods -n ${NAMESPACE} -l app.kubernetes.io/name=analytics-service
-            echo "Checking rollout status..."
+            echo "✅ Verifying rollout..."
             kubectl rollout status deploy/analytics-service-analytics-service -n ${NAMESPACE} --timeout=5m
           '''
         }
