@@ -35,6 +35,7 @@ spec:
         container('terraform') {
           dir('terraform') {
             sh '''
+              # In-cluster provider config
               cat > providers_override.tf <<'EOF'
 provider "kubernetes" {
   host                   = "https://kubernetes.default.svc"
@@ -60,36 +61,32 @@ EOF
       steps {
         container('terraform') {
           dir('terraform') {
-            sh 'terraform init -upgrade'
+            sh '''
+              terraform init -upgrade
+              
+              # Verify state file exists
+              if [ ! -f terraform.tfstate ]; then
+                echo "❌ ERROR: terraform.tfstate not found in Git!"
+                echo "Please run manual import first (see docs)"
+                exit 1
+              fi
+              
+              echo "✅ State file found, listing resources:"
+              terraform state list
+            '''
           }
         }
       }
     }
     
-    stage('Import ALL Existing Resources') {
+    stage('Refresh State') {
       steps {
         container('terraform') {
           dir('terraform') {
             sh '''
-              # Import namespaces
-              terraform import kubernetes_namespace_v1.strimzi strimzi || echo "Already imported"
-              terraform import module.namespace.kubernetes_namespace_v1.ns team4 || echo "Already imported"
-              
-              # Import Strimzi operator
-              terraform import module.strimzi_operator.helm_release.strimzi strimzi/strimzi-operator || echo "Already imported"
-              
-              # Import Kafka resources (skip if fails)
-              terraform import module.kafka.kubernetes_manifest.kafka_nodepool_dualrole \
-                "apiVersion=kafka.strimzi.io/v1beta2,kind=KafkaNodePool,namespace=team4,name=team4-kafka-np-dual" || echo "Skip"
-              
-              terraform import module.kafka.kubernetes_manifest.kafka_cluster \
-                "apiVersion=kafka.strimzi.io/v1beta2,kind=Kafka,namespace=team4,name=team4-kafka" || echo "Skip"
-              
-              # Import InfluxDB
-              terraform import module.influxdb2.helm_release.influxdb2 team4/influxdb2 || echo "Already imported"
-              
-              # Import Analytics Service (MAIN TARGET)
-              terraform import module.analytics_service.helm_release.app team4/analytics-service || echo "Already imported"
+              # Refresh state from cluster (non-destructive)
+              terraform refresh \
+                -target=module.analytics_service.helm_release.app
             '''
           }
         }
@@ -114,7 +111,29 @@ EOF
       steps {
         container('terraform') {
           dir('terraform') {
-            sh 'terraform apply analytics.tfplan'
+            sh 'terraform apply -auto-approve analytics.tfplan'
+          }
+        }
+      }
+    }
+    
+    stage('Commit Updated State') {
+      steps {
+        container('terraform') {
+          dir('terraform') {
+            sh '''
+              # Optional: Push updated state back to Git
+              # (Only if you want to track state changes)
+              if [ -f terraform.tfstate ]; then
+                echo "✅ State file updated"
+                # Uncomment below to auto-commit state
+                # git config user.email "jenkins@ci.local"
+                # git config user.name "Jenkins CI"
+                # git add terraform.tfstate
+                # git commit -m "Update terraform state [skip ci]" || true
+                # git push origin main
+              fi
+            '''
           }
         }
       }
@@ -139,6 +158,11 @@ EOF
   post {
     success {
       echo "✅ Analytics service updated successfully!"
+      container('kubectl') {
+        sh '''
+          kubectl get deploy/analytics-service-analytics-service -n ${NAMESPACE} -o wide
+        '''
+      }
     }
     failure {
       echo "❌ Update failed!"
@@ -146,7 +170,7 @@ EOF
         sh '''
           echo "Debug info:"
           kubectl describe deploy/analytics-service-analytics-service -n ${NAMESPACE} || true
-          kubectl logs -n ${NAMESPACE} -l app.kubernetes.io/name=analytics-service --tail=20 || true
+          kubectl logs -n ${NAMESPACE} -l app.kubernetes.io/name=analytics-service --tail=50 || true
         '''
       }
     }
