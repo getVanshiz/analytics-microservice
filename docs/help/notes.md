@@ -28,7 +28,7 @@ kubectl get kafkatopics -n team4
 
 
 # create or update analytics service
-nerdctl --namespace k8s.io build -t analytics-service:v21 -f docker/Dockerfile .
+nerdctl --namespace k8s.io build -t analytics-service:v22 -f docker/Dockerfile .
 cd terraform
 change version in main.tf
 terraform apply -auto-approve
@@ -56,7 +56,7 @@ kubectl logs deploy/analytics-service-analytics-service -n team4 -f
 
 - kubectl delete secret influxdb-auth -n team4
 - kubectl create secret generic influxdb-auth -n team4 \
-  --from-literal=token='dYdM_rEyjoGAMyIMNH8g2hqzMkl0b40Dg3_5SOz6z7MzRrBoXrdAh792NHJgvPhYsQW5tMWZgWmublLc-i83TQ=='
+  --from-literal=token='d84xOmgaGWVu0dpUHXb0-QF2e0juI8MAL5zEi_qAFyrvoYB1ranU_IGJPpmUvLZ0uT_snivpNGODZ3uC1ZD60w=='
 - kubectl -n team4 rollout restart deploy/analytics-service-analytics-service
 - terraform apply --auto-approve
 
@@ -67,7 +67,7 @@ helm uninstall elasticsearch -n observability
 # Delete ES data PVC (wipes data; fixes stale index/permission)
 kubectl -n observability delete pvc -l app=elasticsearch-master
 # or explicitly:
-# kubectl -n observability delete pvc elasticsearch-master-elasticsearch-master-0
+kubectl -n observability delete pvc elasticsearch-master-elasticsearch-master-0
 
 # Re-apply with Terraform so Helm recreates cleanly
 terraform apply -auto-approve
@@ -100,3 +100,5 @@ echo "PW length: ${#PW}"
   -H 'Content-Type: application/json' \
   -d '{ "index.number_of_replicas": 0 }'
 - kubectl exec -n observability elasticsearch-master-0 -- \  curl -sk -u "elastic:$PW" "https://127.0.0.1:9200/_cluster/health?pretty" 
+
+kubectl exec -n jenkins -it svc/jenkins -c jenkins -- cat /run/secrets/additional/chart-admin-password

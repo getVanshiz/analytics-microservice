@@ -14,17 +14,17 @@ app = Flask(__name__)
 start_time = time.time()
 
 
-# ---------- Prometheus ----------
+
 metrics = PrometheusMetrics(app, path="/metrics")
 metrics.info(
     "app_info",
     "Application info",
-    version=os.getenv("APP_VERSION", "0.1.0"),
+    version=os.getenv("APP_VERSION", "0.2.0"),
     service="analytics-service"
 )
 
 
-# ---------- Health endpoint ----------
+
 @app.route("/health")
 def health():
     uptime = time.time() - start_time
@@ -36,7 +36,7 @@ def health():
     }), 200
 
 
-# ---------- Kafka consumer thread ----------
+
 def start_kafka_consumer():
     logging.info(
         "Starting Kafka consumer thread",
@@ -51,7 +51,7 @@ def start_kafka_consumer():
 if __name__ == "__main__":
     setup_logging()
 
-    # Init OpenTelemetry tracing (export spans to OTEL collector / Jaeger)
+    
     setup_tracing(default_service_name="analytics-service")
 
     logging.info(

@@ -1,0 +1,12 @@
+controller:
+  serviceType: ClusterIP
+  agentListenerEnabled: true
+  jenkinsUrl: http://jenkins.jenkins.svc.cluster.local:8080
+
+  servicePorts:
+    - name: http
+      port: 8080
+      targetPort: 8080
+    - name: agent
+      port: 50000
+      targetPort: 50000

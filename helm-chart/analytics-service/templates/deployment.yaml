@@ -23,11 +23,11 @@ spec:
             - containerPort: {{ .Values.service.port }}
               name: {{ .Values.service.name | default "http" }}
 
-          # ✅ Safe env rendering (supports value + valueFrom)
+          
           env:
             {{- toYaml .Values.env | nindent 12 }}
 
-          # ✅ Health checks (your app already has /health)
+          
           readinessProbe:
             httpGet:
               path: /health

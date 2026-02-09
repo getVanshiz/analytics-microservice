@@ -20,7 +20,7 @@
   "liveNow": false,
   "panels": [
     {
-      "datasource": "P951FEA4DE68E13C5",
+      "datasource": "P60A1FF48B924E7C0",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -71,7 +71,7 @@
       "pluginVersion": "11.2.0",
       "targets": [
         {
-          "datasource": "P951FEA4DE68E13C5",
+          "datasource": "P60A1FF48B924E7C0",
           "query": "from(bucket: \"analytics\")\n  |> range(start: -5m)\n  |> filter(fn: (r) => r._measurement == \"event_ingest\" and r._field == \"latency_ms\")\n  |> aggregateWindow(every: 1m, fn: count, createEmpty: true)\n  |> sum()",
           "refId": "A"
         }
@@ -83,7 +83,7 @@
       "datasource": {
         "default": false,
         "type": "influxdb",
-        "uid": "P951FEA4DE68E13C5"
+        "uid": "P60A1FF48B924E7C0"
       },
       "fieldConfig": {
         "defaults": {
@@ -132,7 +132,7 @@
       "pluginVersion": "11.2.0",
       "targets": [
         {
-          "datasource": "P951FEA4DE68E13C5",
+          "datasource": "P60A1FF48B924E7C0",
           "query": "\nfrom(bucket: \"analytics\")\n  |> range(start: -1h)\n  |> filter(fn: (r) =>\n      r._measurement == \"event_ingest\" and\n      r._field == \"latency_ms\" and\n      r.topic =~ /${topics:regex}/\n  )\n  |> aggregateWindow(every: 1m, fn: count, createEmpty: true)\n  |> fill(column: \"_value\", value: 0)   // <-- int, not 0.0\n  |> group(columns: [\"topic\"])\n",
           "refId": "A"
         }
@@ -144,7 +144,7 @@
       "datasource": {
         "default": false,
         "type": "influxdb",
-        "uid": "P951FEA4DE68E13C5"
+        "uid": "P60A1FF48B924E7C0"
       },
       "fieldConfig": {
         "defaults": {
@@ -223,7 +223,7 @@
       },
       "targets": [
         {
-          "datasource": "P951FEA4DE68E13C5",
+          "datasource": "P60A1FF48B924E7C0",
           "query": "\nfrom(bucket: \"analytics\")\n  |> range(start: -1h)\n  |> filter(fn: (r) =>\n      r._measurement == \"event_ingest\" and\n      r._field == \"latency_ms\" and\n      r.topic =~ /${topics:regex}/\n  )\n  |> aggregateWindow(\n      every: 1m,\n      fn: (column, tables=<-) => tables\n          |> quantile(column: column, q: 0.95, method: \"estimate_tdigest\"),\n      createEmpty: true\n  )\n  |> fill(column: \"_value\", value: 0.0)\n  |> group(columns: [\"topic\"])\n",
           "refId": "A"
         }
@@ -235,7 +235,7 @@
       "datasource": {
         "default": false,
         "type": "influxdb",
-        "uid": "P951FEA4DE68E13C5"
+        "uid": "P60A1FF48B924E7C0"
       },
       "fieldConfig": {
         "defaults": {
@@ -314,7 +314,7 @@
       },
       "targets": [
         {
-          "datasource": "P951FEA4DE68E13C5",
+          "datasource": "P60A1FF48B924E7C0",
           "query": "\nfrom(bucket: \"analytics\")\n  |> range(start: -1h)\n  |> filter(fn: (r) =>\n      r._measurement == \"event_ingest\" and\n      r._field == \"consumer_lag\" and\n      r.topic =~ /${topics:regex}/\n  )\n  |> aggregateWindow(every: 30s, fn: mean, createEmpty: true)\n  |> fill(column: \"_value\", value: 0.0)\n  |> group(columns: [\"topic\"])\n",
           "refId": "A"
         }
@@ -326,7 +326,7 @@
       "datasource": {
         "default": false,
         "type": "influxdb",
-        "uid": "P951FEA4DE68E13C5"
+        "uid": "P60A1FF48B924E7C0"
       },
       "fieldConfig": {
         "defaults": {
@@ -405,7 +405,7 @@
       },
       "targets": [
         {
-          "datasource": "P951FEA4DE68E13C5",
+          "datasource": "P60A1FF48B924E7C0",
           "query": "\nfrom(bucket: \"analytics\")\n  |> range(start: -1h)\n  |> filter(fn: (r) =>\n      r._measurement == \"event_ingest\" and\n      r._field == \"latency_ms\" and\n      r.topic =~ /${topics:regex}/\n  )\n  |> group(columns: [\"topic\", \"event_type\"]) \n  |> aggregateWindow(every: 1m, fn: count, createEmpty: true)\n  |> fill(column: \"_value\", value: 0)   // count -> int, so use 0 (not 0.0)\n",
           "refId": "A"
         }
@@ -417,7 +417,7 @@
       "datasource": {
         "default": false,
         "type": "influxdb",
-        "uid": "P951FEA4DE68E13C5"
+        "uid": "P60A1FF48B924E7C0"
       },
       "fieldConfig": {
         "defaults": {
@@ -467,7 +467,7 @@
       "pluginVersion": "11.2.0",
       "targets": [
         {
-          "datasource": "P951FEA4DE68E13C5",
+          "datasource": "P60A1FF48B924E7C0",
           "query": "\nfrom(bucket: \"analytics\")\n  |> range(start: -5m)\n  |> filter(fn: (r) =>\n      r._measurement == \"event_ingest\" and\n      r.topic =~ /${topics:regex}/\n  )\n  |> keep(columns: [\"_time\", \"topic\", \"event_type\", \"source_team\", \"_field\", \"_value\"])\n  |> sort(columns: [\"_time\"], desc: true)\n  |> limit(n: 100)\n",
           "refId": "A"
         }
@@ -513,7 +513,7 @@
         },
         "datasource": {
           "type": "influxdb",
-          "uid": "P951FEA4DE68E13C5"
+          "uid": "P60A1FF48B924E7C0"
         },
         "definition": "",
         "hide": 0,

@@ -4,23 +4,32 @@ locals {
   kafka_cluster = "team4-kafka"
 }
 
+# ---------------------------
+# Namespaces
+# ---------------------------
 
-# Create dedicated namespace for Strimzi operator
 resource "kubernetes_namespace_v1" "strimzi" {
-  metadata {
-    name = "strimzi"
-  }
+  metadata { name = "strimzi" }
 }
 
-
-# Namespace
 module "namespace" {
   source = "./modules/namespace"
   name   = local.namespace
 }
 
+module "ns_monitoring" {
+  source = "./modules/namespace"
+  name   = "monitoring"
+}
 
+module "ns_observability" {
+  source = "./modules/namespace"
+  name   = "observability"
+}
 
+# ---------------------------
+# Strimzi Operator
+# ---------------------------
 
 module "strimzi_operator" {
   source        = "./modules/strimzi-operator"
@@ -28,32 +37,50 @@ module "strimzi_operator" {
   chart_version = "0.49.1"
 
   values = {
-    watchNamespaces = ["team4"]
+    watchNamespaces = [local.namespace]
   }
 
   depends_on = [kubernetes_namespace_v1.strimzi]
 }
 
+# ---------------------------
+# WAIT: Strimzi CRDs
+# ---------------------------
 
+resource "null_resource" "wait_for_strimzi_crds" {
+  provisioner "local-exec" {
+    command = <<EOT
+      echo "Waiting for Strimzi Kafka CRDs..."
+      kubectl wait --for=condition=Established crd/kafkas.kafka.strimzi.io --timeout=300s
+    EOT
+  }
 
+  depends_on = [module.strimzi_operator]
+}
 
+# ---------------------------
+# Kafka Cluster
+# ---------------------------
 
-# Kafka CRs (KRaft, single-broker)
 module "kafka" {
   source    = "./modules/kafka"
   namespace = module.namespace.name
   cluster   = local.kafka_cluster
-  depends_on = [module.strimzi_operator]
+
+  depends_on = [null_resource.wait_for_strimzi_crds]
 }
 
-# Kafka CRs (KRaft, single-broker)
+# ---------------------------
+# Kafka Topics
+# ---------------------------
 
 module "kafka_topic_user_events" {
   source    = "./modules/kafka-topic"
   namespace = module.namespace.name
   cluster   = local.kafka_cluster
-  name      = "user-events"            # <-- FIXED
-  topicName = "user-events"            # <-- real Kafka topic name
+  name      = "user-events"
+  topicName = "user-events"
+
   depends_on = [module.kafka]
 }
 
@@ -63,6 +90,7 @@ module "kafka_topic_order_events" {
   cluster   = local.kafka_cluster
   name      = "order-events"
   topicName = "order-events"
+
   depends_on = [module.kafka]
 }
 
@@ -72,9 +100,9 @@ module "kafka_topic_notification_events" {
   cluster   = local.kafka_cluster
   name      = "notification-events"
   topicName = "notification-events"
+
   depends_on = [module.kafka]
 }
-
 
 module "kafka_topic_analytics_events" {
   source    = "./modules/kafka-topic"
@@ -82,18 +110,22 @@ module "kafka_topic_analytics_events" {
   cluster   = local.kafka_cluster
   name      = "analytics-events"
   topicName = "analytics-events"
+
   depends_on = [module.kafka]
 }
 
+# ---------------------------
+# InfluxDB
+# ---------------------------
 
-# InfluxDB v2 (Helm)
 module "influxdb2" {
   source    = "./modules/influxdb2"
   namespace = module.namespace.name
   name      = "influxdb2"
 
   values = {
-    persistence = { enabled = false } # ephemeral for dev
+    persistence = { enabled = false }
+
     adminUser = {
       user         = "admin"
       password     = "admin123"
@@ -101,57 +133,35 @@ module "influxdb2" {
       organization = "team4"
       bucket       = "analytics"
     }
+
     service = { type = "ClusterIP" }
   }
 
   depends_on = [module.namespace]
 }
 
-# Analytics service (local Helm chart)
-module "analytics_service" {
-  source     = "./modules/analytics-service"
-  namespace  = module.namespace.name
-  name       = "analytics-service"
-  chart_path = "${path.module}/../helm-chart/analytics-service"
+# ---------------------------
+# InfluxDB Token Secret (NO MANUAL STEP)
+# ---------------------------
 
-  
-  values = {
-    image = {
-      repository = "analytics-service"
-      tag        = "v21"        # ✅ NEW TAG
-      pullPolicy = "Never"
-    }
-    replicaCount = 1
-    service      = { port = 8080 }
-
-    kafka = {
-      bootstrapServers = module.kafka.bootstrap_dns
-    }
-    influxdb = {
-      url      = "http://${module.influxdb2.release_name}.${module.influxdb2.namespace}.svc.cluster.local"
-      org      = "team4"
-      bucket   = "analytics"
-      token    = "team4-dev-admin-token"
-      username = "admin"
-      password = "admin123"
-    }
+resource "kubernetes_secret" "influxdb_auth" {
+  metadata {
+    name      = "influxdb-auth"
+    namespace = module.namespace.name
   }
 
-  depends_on = [
-    module.influxdb2,
-    module.kafka
-  ]
+  data = {
+    token = base64encode("team4-dev-admin-token")
+  }
+
+  type = "Opaque"
+
+  depends_on = [module.influxdb2]
 }
 
 # ---------------------------
-# (Optional) Monitoring stack
+# Monitoring Stack
 # ---------------------------
-module "ns_monitoring" {
-  source = "./modules/namespace"
-  name   = "monitoring"
-}
-
-
 
 module "monitoring" {
   source        = "./modules/monitoring"
@@ -163,27 +173,7 @@ module "monitoring" {
     nodeExporter = { enabled = false }
 
     grafana = {
-      service       = { type = "ClusterIP" }
       adminPassword = "admin123"
-
-      additionalDataSources = [
-        {
-          name   = "InfluxDB-Team4"
-          type   = "influxdb"
-          access = "proxy"
-          url    = "http://${module.influxdb2.release_name}.${module.influxdb2.namespace}.svc.cluster.local"
-          jsonData = {
-            version        = "Flux"     # Flux query language
-            organization   = "team4"    # <-- CHANGED
-            defaultBucket  = "analytics" # <-- CHANGED
-            httpHeaderName1 = "Authorization"
-            tlsSkipVerify  = true
-          }
-          secureJsonData = {
-            httpHeaderValue1 = "Token team4-dev-admin-token"  # <-- Prefer using a Secret (see below)
-          }
-        }
-      ]
     }
 
     prometheus = {
@@ -199,21 +189,60 @@ module "monitoring" {
   depends_on = [module.ns_monitoring]
 }
 
-module "jaeger" {
-  source       = "./modules/logging/jaeger"
-  release_name = "jaeger"
-  namespace    = module.ns_monitoring.name
-  depends_on   = [module.ns_monitoring]
+# ---------------------------
+# WAIT: ServiceMonitor CRDs
+# ---------------------------
+
+resource "null_resource" "wait_for_monitoring_crds" {
+  provisioner "local-exec" {
+    command = <<EOT
+      echo "Waiting for ServiceMonitor CRDs..."
+      kubectl wait --for=condition=Established crd/servicemonitors.monitoring.coreos.com --timeout=300s
+    EOT
+  }
+
+  depends_on = [module.monitoring]
 }
 
-module "opentelemetry" {
-  source       = "./modules/logging/opentelemetry"
-  release_name = "otel-collector"
-  namespace    = module.ns_monitoring.name
-  depends_on   = [module.jaeger]
+# ---------------------------
+# Analytics Service
+# ---------------------------
+
+module "analytics_service" {
+  source     = "./modules/analytics-service"
+  namespace  = module.namespace.name
+  name       = "analytics-service"
+  chart_path = "${path.module}/../helm-chart/analytics-service"
+
+  values = {
+    image = {
+      repository = "analytics-service"
+      tag        = "v24"
+      pullPolicy = "Never"
+    }
+
+    kafka = {
+      bootstrapServers = module.kafka.bootstrap_dns
+    }
+
+    influxdb = {
+      url    = "http://${module.influxdb2.release_name}.${module.influxdb2.namespace}.svc.cluster.local"
+      org    = "team4"
+      bucket = "analytics"
+      token  = "team4-dev-admin-token"
+    }
+  }
+
+  depends_on = [
+    module.kafka,
+    module.influxdb2
+  ]
 }
 
-# Example ServiceMonitor for analytics-service (if monitoring enabled)
+# ---------------------------
+# ServiceMonitors
+# ---------------------------
+
 resource "kubernetes_manifest" "analytics_service_monitor" {
   manifest = {
     apiVersion = "monitoring.coreos.com/v1"
@@ -231,21 +260,22 @@ resource "kubernetes_manifest" "analytics_service_monitor" {
           "app.kubernetes.io/name" = "analytics-service"
         }
       }
-      endpoints = [
-        {
-          port     = "http"   # ensure Service has a named port "http"
-          path     = "/metrics"
-          interval = "30s"
-        }
-      ]
+      endpoints = [{
+        port     = "http"
+        path     = "/metrics"
+        interval = "30s"
+      }]
       namespaceSelector = {
         matchNames = [module.namespace.name]
       }
     }
   }
-  depends_on = [module.analytics_service]
-}
 
+  depends_on = [
+    null_resource.wait_for_monitoring_crds,
+    module.analytics_service
+  ]
+}
 
 resource "kubernetes_manifest" "influxdb_sm" {
   manifest = {
@@ -261,17 +291,15 @@ resource "kubernetes_manifest" "influxdb_sm" {
     spec = {
       selector = {
         matchLabels = {
-          "app.kubernetes.io/name"      = "influxdb2"
-          "app.kubernetes.io/instance"  = "influxdb2"
+          "app.kubernetes.io/name"     = "influxdb2"
+          "app.kubernetes.io/instance" = "influxdb2"
         }
       }
-      endpoints = [
-        {
-          port     = "http"
-          path     = "/metrics"
-          interval = "30s"
-        }
-      ]
+      endpoints = [{
+        port     = "http"
+        path     = "/metrics"
+        interval = "30s"
+      }]
       namespaceSelector = {
         matchNames = [module.namespace.name]
       }
@@ -279,13 +307,10 @@ resource "kubernetes_manifest" "influxdb_sm" {
   }
 
   depends_on = [
-    module.influxdb2,
-    module.monitoring
+    null_resource.wait_for_monitoring_crds,
+    module.influxdb2
   ]
 }
-
-
-
 
 resource "kubernetes_manifest" "kafka_exporter_sm" {
   manifest = {
@@ -301,17 +326,15 @@ resource "kubernetes_manifest" "kafka_exporter_sm" {
     spec = {
       selector = {
         matchLabels = {
-          "strimzi.io/cluster" = local.kafka_cluster
-          "app.kubernetes.io/name" = "kafka-exporter"
+          "strimzi.io/cluster"        = local.kafka_cluster
+          "app.kubernetes.io/name"    = "kafka-exporter"
         }
       }
-      endpoints = [
-        {
-          port     = "prometheus" # STRIMZI DEFAULT PORT
-          interval = "30s"
-          path     = "/metrics"
-        }
-      ]
+      endpoints = [{
+        port     = "prometheus"
+        path     = "/metrics"
+        interval = "30s"
+      }]
       namespaceSelector = {
         matchNames = [module.namespace.name]
       }
@@ -319,43 +342,61 @@ resource "kubernetes_manifest" "kafka_exporter_sm" {
   }
 
   depends_on = [
-    module.kafka,
-    module.monitoring
+    null_resource.wait_for_monitoring_crds,
+    module.kafka
   ]
 }
 
-
-module "ns_observability" {
-  source = "./modules/namespace"
-  name   = "observability"
-}
+# ---------------------------
+# Logging / Observability
+# ---------------------------
 
 module "elasticsearch" {
   source       = "./modules/logging/elasticsearch"
   release_name = "elasticsearch"
   namespace    = module.ns_observability.name
-  
-  depends_on   = [module.ns_observability]
-
 }
 
 module "kibana" {
   source       = "./modules/logging/kibana"
   release_name = "kibana"
   namespace    = module.ns_observability.name
-  depends_on   = [module.elasticsearch]   # ✅ enforce order here
+
+  depends_on = [module.elasticsearch]
 }
 
 module "filebeat" {
   source       = "./modules/logging/filebeat"
   release_name = "filebeat"
   namespace    = module.ns_observability.name
-  depends_on   = [module.elasticsearch]   # ✅ enforce order here
+
+  depends_on = [module.elasticsearch]
 }
 
 module "kibana_objects" {
   source    = "./modules/logging/kibana-objects"
   name      = "kibana-objects"
   namespace = module.ns_observability.name
-  depends_on = [module.kibana]            # ✅ enforce order here
+
+  depends_on = [module.kibana]
+}
+
+module "jaeger" {
+  source       = "./modules/logging/jaeger"
+  release_name = "jaeger"
+  namespace    = module.ns_monitoring.name
+
+  depends_on = [
+    module.ns_monitoring
+  ]
+}
+
+module "opentelemetry" {
+  source       = "./modules/logging/opentelemetry"
+  release_name = "otel-collector"
+  namespace    = module.ns_monitoring.name
+
+  depends_on = [
+    module.jaeger
+  ]
 }
