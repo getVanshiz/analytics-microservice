@@ -20,20 +20,21 @@ spec:
 """
     }
   }
-
+  
   environment {
     NAMESPACE = "team4"
   }
-
+  
   stages {
     stage('Checkout') {
       steps {
         checkout scm
         sh 'ls -la'
-        sh 'cat terraform/main.tf | grep "tag ="'
+        sh 'echo "Checking terraform directory..."'
+        sh 'ls -la terraform/'
       }
     }
-
+    
     stage('Terraform Init') {
       steps {
         container('terraform') {
@@ -43,7 +44,7 @@ spec:
         }
       }
     }
-
+    
     stage('Terraform Plan') {
       steps {
         container('terraform') {
@@ -53,7 +54,7 @@ spec:
         }
       }
     }
-
+    
     stage('Terraform Apply') {
       steps {
         container('terraform') {
@@ -63,20 +64,23 @@ spec:
         }
       }
     }
-
+    
     stage('Verify Deployment') {
       steps {
         container('kubectl') {
           sh '''
-            sleep 10
+            echo "Waiting for deployment to stabilize..."
+            sleep 15
+            echo "Checking pods in namespace ${NAMESPACE}..."
             kubectl get pods -n ${NAMESPACE} -l app.kubernetes.io/name=analytics-service
-            kubectl rollout status deploy/analytics-service-analytics-service -n ${NAMESPACE}
+            echo "Checking rollout status..."
+            kubectl rollout status deploy/analytics-service-analytics-service -n ${NAMESPACE} --timeout=5m
           '''
         }
       }
     }
   }
-
+  
   post {
     success {
       echo "✅ Deployment successful!"
