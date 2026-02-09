@@ -9,13 +9,11 @@ spec:
   containers:
   - name: terraform
     image: hashicorp/terraform:1.5
-    command:
-    - cat
+    command: [cat]
     tty: true
   - name: kubectl
     image: alpine/k8s:1.28.3
-    command:
-    - cat
+    command: [cat]
     tty: true
 """
     }
@@ -29,8 +27,32 @@ spec:
     stage('Checkout') {
       steps {
         checkout scm
-        sh 'ls -la'
-        sh 'ls -la terraform/'
+      }
+    }
+    
+    stage('Configure Terraform for K8s') {
+      steps {
+        container('terraform') {
+          dir('terraform') {
+            sh '''
+              # In-cluster auth setup (Jenkins pod ke andar se K8s access)
+              cat > providers_override.tf <<'EOF'
+provider "kubernetes" {
+  host                   = "https://kubernetes.default.svc"
+  token                  = file("/var/run/secrets/kubernetes.io/serviceaccount/token")
+  cluster_ca_certificate = file("/var/run/secrets/kubernetes.io/serviceaccount/ca.crt")
+}
+provider "helm" {
+  kubernetes {
+    host                   = "https://kubernetes.default.svc"
+    token                  = file("/var/run/secrets/kubernetes.io/serviceaccount/token")
+    cluster_ca_certificate = file("/var/run/secrets/kubernetes.io/serviceaccount/ca.crt")
+  }
+}
+EOF
+            '''
+          }
+        }
       }
     }
     
@@ -38,35 +60,47 @@ spec:
       steps {
         container('terraform') {
           dir('terraform') {
-            sh 'terraform init'
+            sh 'terraform init -upgrade'
           }
         }
       }
     }
     
-    stage('Import Existing Resources') {
+    stage('Import Analytics Service') {
       steps {
         container('terraform') {
           dir('terraform') {
             sh '''
-              echo "Importing existing resources..."
-              terraform import -input=false kubernetes_namespace_v1.strimzi strimzi 2>/dev/null || echo "strimzi namespace already imported or doesn't exist"
-              terraform import -input=false module.namespace.kubernetes_namespace_v1.ns team4 2>/dev/null || echo "team4 namespace already imported or doesn't exist"
+              # Existing Helm release ko import karo state mein
+              terraform import \
+                module.analytics_service.helm_release.app \
+                ${NAMESPACE}/analytics-service || echo "Already imported"
             '''
           }
         }
       }
     }
     
-    stage('Terraform Apply') {
+    stage('Plan Analytics Update') {
       steps {
         container('terraform') {
           dir('terraform') {
             sh '''
-              terraform apply \
+              # Sirf analytics service ka plan dekho
+              terraform plan \
                 -target=module.analytics_service.helm_release.app \
-                -auto-approve
+                -out=analytics.tfplan
             '''
+          }
+        }
+      }
+    }
+    
+    stage('Apply Analytics Update') {
+      steps {
+        container('terraform') {
+          dir('terraform') {
+            sh 'terraform apply analytics.tfplan'
           }
         }
       }
@@ -76,12 +110,16 @@ spec:
       steps {
         container('kubectl') {
           sh '''
-            echo "⏳ Waiting for deployment..."
-            sleep 15
-            echo "📋 Checking pods..."
+            echo "📋 Checking analytics service..."
             kubectl get pods -n ${NAMESPACE} -l app.kubernetes.io/name=analytics-service
-            echo "✅ Verifying rollout..."
-            kubectl rollout status deploy/analytics-service-analytics-service -n ${NAMESPACE} --timeout=5m
+            
+            echo "✅ Waiting for rollout..."
+            kubectl rollout status deploy/analytics-service-analytics-service \
+              -n ${NAMESPACE} --timeout=3m
+            
+            echo "🏥 Health check..."
+            sleep 5
+            kubectl get svc analytics-service-analytics-service -n ${NAMESPACE}
           '''
         }
       }
@@ -90,10 +128,25 @@ spec:
   
   post {
     success {
-      echo "✅ Deployment successful!"
+      echo "✅ Analytics service updated successfully!"
     }
     failure {
-      echo "❌ Deployment failed!"
+      echo "❌ Update failed!"
+      container('kubectl') {
+        sh '''
+          echo "Debug info:"
+          kubectl describe deploy/analytics-service-analytics-service -n ${NAMESPACE} || true
+          kubectl logs -n ${NAMESPACE} -l app.kubernetes.io/name=analytics-service --tail=20 || true
+        '''
+      }
+    }
+    always {
+      container('terraform') {
+        dir('terraform') {
+          sh 'rm -f providers_override.tf analytics.tfplan || true'
+        }
+      }
     }
   }
 }
+
