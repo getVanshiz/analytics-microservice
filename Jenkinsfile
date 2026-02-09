@@ -21,6 +21,7 @@ spec:
   
   environment {
     NAMESPACE = "team4"
+    SERVICE_NAME = "analytics-service"  // ✅ Centralized
   }
   
   stages {
@@ -30,7 +31,7 @@ spec:
       }
     }
     
-    stage('Configure Terraform') {
+    stage('Configure IaC Provider') {  // ✅ Generic
       steps {
         container('terraform') {
           dir('terraform') {
@@ -42,7 +43,6 @@ provider "kubernetes" {
   token                  = file("/var/run/secrets/kubernetes.io/serviceaccount/token")
   cluster_ca_certificate = file("/var/run/secrets/kubernetes.io/serviceaccount/ca.crt")
 }
-
 provider "helm" {
   kubernetes {
     host                   = "https://kubernetes.default.svc"
@@ -86,32 +86,32 @@ EOF
             sh '''
               # Refresh state from cluster (non-destructive)
               terraform refresh \
-                -target=module.analytics_service.helm_release.app
+                -target=module.${SERVICE_NAME}.helm_release.app
             '''
           }
         }
       }
     }
     
-    stage('Plan Analytics Update') {
+    stage('Plan Deployment') {  
       steps {
         container('terraform') {
           dir('terraform') {
             sh '''
               terraform plan \
-                -target=module.analytics_service.helm_release.app \
-                -out=analytics.tfplan
+                -target=module.${SERVICE_NAME}.helm_release.app \
+                -out=service.tfplan
             '''
           }
         }
       }
     }
     
-    stage('Apply Analytics Update') {
+    stage('Apply Changes') {  
       steps {
         container('terraform') {
           dir('terraform') {
-            sh 'terraform apply -auto-approve analytics.tfplan'
+            sh 'terraform apply -auto-approve service.tfplan'
           }
         }
       }
@@ -125,7 +125,7 @@ EOF
               # Optional: Push updated state back to Git
               # (Only if you want to track state changes)
               if [ -f terraform.tfstate ]; then
-                echo "✅ State file updated"
+                echo " State file updated"
                 # Uncomment below to auto-commit state
                 # git config user.email "jenkins@ci.local"
                 # git config user.name "Jenkins CI"
@@ -143,11 +143,11 @@ EOF
       steps {
         container('kubectl') {
           sh '''
-            echo "📋 Checking analytics service..."
-            kubectl get pods -n ${NAMESPACE} -l app.kubernetes.io/name=analytics-service
+            echo " Checking service deployment..."
+            kubectl get pods -n ${NAMESPACE} -l app.kubernetes.io/name=${SERVICE_NAME}
             
-            echo "✅ Waiting for rollout..."
-            kubectl rollout status deploy/analytics-service-analytics-service \
+            echo " Waiting for rollout..."
+            kubectl rollout status deploy/${SERVICE_NAME}-${SERVICE_NAME} \
               -n ${NAMESPACE} --timeout=3m
           '''
         }
@@ -157,27 +157,27 @@ EOF
   
   post {
     success {
-      echo "✅ Analytics service updated successfully!"
+      echo "Deployment successful!"  
       container('kubectl') {
         sh '''
-          kubectl get deploy/analytics-service-analytics-service -n ${NAMESPACE} -o wide
+          kubectl get deploy/${SERVICE_NAME}-${SERVICE_NAME} -n ${NAMESPACE} -o wide
         '''
       }
     }
     failure {
-      echo "❌ Update failed!"
+      echo " Deployment failed!" 
       container('kubectl') {
         sh '''
           echo "Debug info:"
-          kubectl describe deploy/analytics-service-analytics-service -n ${NAMESPACE} || true
-          kubectl logs -n ${NAMESPACE} -l app.kubernetes.io/name=analytics-service --tail=50 || true
+          kubectl describe deploy/${SERVICE_NAME}-${SERVICE_NAME} -n ${NAMESPACE} || true
+          kubectl logs -n ${NAMESPACE} -l app.kubernetes.io/name=${SERVICE_NAME} --tail=50 || true
         '''
       }
     }
     always {
       container('terraform') {
         dir('terraform') {
-          sh 'rm -f providers_override.tf analytics.tfplan || true'
+          sh 'rm -f providers_override.tf service.tfplan || true'  
         }
       }
     }
