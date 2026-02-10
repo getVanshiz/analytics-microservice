@@ -16,20 +16,15 @@ class JsonFormatter(logging.Formatter):
             "logger": record.name,
         }
 
-        # If you set extra={"trace_id": "..."} (your existing style)
         if hasattr(record, "trace_id"):
             log["trace_id"] = record.trace_id
 
-        # OTel correlation (current span context)
         span = trace.get_current_span()
         ctx = span.get_span_context()
         if ctx and ctx.is_valid:
             log["otel_trace_id"] = format(ctx.trace_id, "032x")
             log["otel_span_id"] = format(ctx.span_id, "016x")
 
-        # Support BOTH patterns:
-        # - extra={"extra": {...}}  (used in main.py)
-        # - extra={"extra_fields": {...}} (used in consumer.py)
         if hasattr(record, "extra") and isinstance(record.extra, dict):
             log.update(record.extra)
 

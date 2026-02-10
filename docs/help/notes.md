@@ -56,7 +56,7 @@ kubectl logs deploy/analytics-service-analytics-service -n team4 -f
 
 - kubectl delete secret influxdb-auth -n team4
 - kubectl create secret generic influxdb-auth -n team4 \
-  --from-literal=token='d84xOmgaGWVu0dpUHXb0-QF2e0juI8MAL5zEi_qAFyrvoYB1ranU_IGJPpmUvLZ0uT_snivpNGODZ3uC1ZD60w=='
+  --from-literal=token='tB-MdSQ34IYqOf-bC2-LiGQJkCOF_L92pgJ0SoIZIWA2Pn5zkXnW49t4UlxwXEI76DCVXtytwDsMWR1BAh_jVg=='
 - kubectl -n team4 rollout restart deploy/analytics-service-analytics-service
 - terraform apply --auto-approve
 

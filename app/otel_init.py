@@ -22,7 +22,7 @@ def setup_tracing(default_service_name: str):
     """
     service_name = os.getenv("OTEL_SERVICE_NAME", default_service_name)
 
-    # IMPORTANT: For OTLP gRPC use host:port (no http://)
+
     endpoint = os.getenv(
         "OTEL_EXPORTER_OTLP_ENDPOINT",
         "otel-collector-opentelemetry-collector.monitoring.svc.cluster.local:4317",
