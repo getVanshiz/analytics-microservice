@@ -1,0 +1,63 @@
+controller:
+  serviceType: ClusterIP
+  servicePort: 8080
+  agentListenerPort: 50000
+  jenkinsUrl: http://localhost:9000
+
+  admin:
+    username: admin
+    password: admin123
+
+  # IMPORTANT: defining installPlugins overrides defaults.
+  # So keep core plugins + your UI plugins, WITHOUT versions.
+  installPlugins:
+    # Core
+    - kubernetes
+    - workflow-aggregator
+    - git
+    - configuration-as-code
+
+    # UI
+    - blueocean
+    - dark-theme
+    - simple-theme-plugin
+    - pipeline-stage-view
+    - ansicolor
+    - greenballs
+
+    # Useful pipeline steps
+    - pipeline-utility-steps
+
+  # Optional: helps if old plugins exist on the volume
+  overwritePlugins: true
+
+  csrf:
+    defaultCrumbIssuer:
+      enabled: true
+      proxyCompatability: true
+
+  JCasC:
+    defaultConfig: true
+    configScripts:
+      welcome-message: |
+        jenkins:
+          systemMessage: "🚀 Jenkins CI/CD for Analytics Service"
+
+agent:
+  enabled: true
+  image:
+    repository: jenkins/inbound-agent
+    tag: 3355.v388858a_47b_33-3-jdk21
+
+persistence:
+  enabled: true
+  storageClass: local-path
+  size: 8Gi
+
+serviceAccount:
+  create: true
+  name: jenkins
+
+rbac:
+  create: true
+  readSecrets: true

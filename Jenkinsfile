@@ -26,7 +26,7 @@ spec:
   environment {
     NAMESPACE = "team4"
     SERVICE_NAME = "analytics-service"
-    GITHUB_REPO = "your-username/your-repo"  // ✅ Apna repo naam daalo
+    GITHUB_REPO = "vanshiz-os/analytics-microservice"
   }
   
   stages {

@@ -2,11 +2,9 @@
 
 echo "Cleaning up old port-forward processes..."
 # Kill ANY kubectl port-forward processes (covers kubectl, kubectl1., etc.)
-pkill -f "port-forward" 2>/dev/null || true
+pkill -f "kubectl port-forward" 2>/dev/null || true
 
-# Optional: wait 1 second to ensure ports are fully released
 sleep 1
-
 echo "Starting fresh port-forwards..."
 
 # Prometheus
@@ -32,7 +30,7 @@ echo "Analytics Service → http://localhost:8080/metrics"
 
 # Elasticsearch
 kubectl port-forward -n observability svc/elasticsearch-master 9200:9200 >/tmp/pf-elasticsearch.log 2>&1 &
-echo "Elasticsearch is Up"
+echo "Elasticsearch → http://localhost:9200"
 
 # Kibana
 kubectl port-forward -n observability svc/kibana-kibana 5601:5601 >/tmp/pf-kibana.log 2>&1 &
@@ -45,5 +43,10 @@ echo "Jaeger → http://localhost:16686"
 # OpenTelemetry Collector (Metrics)
 kubectl port-forward -n monitoring deploy/otel-collector-opentelemetry-collector 8888:8888 >/tmp/pf-otel.log 2>&1 &
 echo "OTel Collector Metrics → http://localhost:8888/metrics"
+
+# ✅ Jenkins (UI)
+kubectl port-forward -n jenkins svc/jenkins 9000:8080 >/tmp/pf-jenkins.log 2>&1 &
+echo "Jenkins → http://localhost:9000"
+echo "Blue Ocean → http://localhost:9000/blue"
 
 echo "All port-forwarding started!"

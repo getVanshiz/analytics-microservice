@@ -1,0 +1,6 @@
+USER-SUPPLIED VALUES:
+controller:
+  agentListenerEnabled: true
+  jenkinsUrl: http://jenkins.jenkins.svc.cluster.local:8080
+  servicePortAgent: 50000
+  serviceType: ClusterIP
