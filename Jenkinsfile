@@ -15,13 +15,18 @@ spec:
     image: alpine/k8s:1.28.3
     command: [cat]
     tty: true
+  - name: curl
+    image: curlimages/curl:latest
+    command: [cat]
+    tty: true
 """
     }
   }
   
   environment {
     NAMESPACE = "team4"
-    SERVICE_NAME = "analytics-service"  // ✅ Centralized
+    SERVICE_NAME = "analytics-service"
+    GITHUB_REPO = "your-username/your-repo"  // ✅ Apna repo naam daalo
   }
   
   stages {
@@ -31,12 +36,56 @@ spec:
       }
     }
     
-    stage('Configure IaC Provider') {  // ✅ Generic
+    stage('Check CI Status') {  // ✅ New stage
+      steps {
+        container('curl') {
+          script {
+            // Get current commit SHA
+            def sha = sh(
+              script: "git rev-parse HEAD",
+              returnStdout: true
+            ).trim()
+            
+            echo "📋 Checking GitHub Actions CI status for commit: ${sha}"
+            
+            // Check CI status via GitHub API
+            def response = sh(
+              script: """
+                curl -s \
+                  -H "Accept: application/vnd.github.v3+json" \
+                  https://api.github.com/repos/${GITHUB_REPO}/commits/${sha}/status
+              """,
+              returnStdout: true
+            )
+            
+            echo "GitHub API Response: ${response}"
+            
+            // Parse JSON response
+            def jsonResponse = readJSON text: response
+            def state = jsonResponse.state
+            
+            echo "✅ GitHub Actions CI status: ${state}"
+            
+            // Check if CI passed
+            if (state == "success") {
+              echo "✅ CI passed! Proceeding with deployment..."
+            } else if (state == "pending") {
+              error("⏳ CI is still running. Wait for CI to complete before deploying.")
+            } else if (state == "failure") {
+              error("❌ CI failed! Fix tests before deploying.")
+            } else {
+              echo "⚠️  No CI status found. Proceeding anyway (assuming first build)..."
+            }
+          }
+        }
+      }
+    }
+    
+    stage('Configure IaC Provider') {
       steps {
         container('terraform') {
           dir('terraform') {
             sh '''
-              # In-cluster provider config
               cat > providers_override.tf <<'EOF'
 provider "kubernetes" {
   host                   = "https://kubernetes.default.svc"
@@ -57,6 +106,8 @@ EOF
       }
     }
     
+    // ... rest of your stages remain same
+    
     stage('Terraform Init') {
       steps {
         container('terraform') {
@@ -64,7 +115,6 @@ EOF
             sh '''
               terraform init -upgrade
               
-              # Verify state file exists
               if [ ! -f terraform.tfstate ]; then
                 echo "❌ ERROR: terraform.tfstate not found in Git!"
                 echo "Please run manual import first (see docs)"
@@ -84,7 +134,6 @@ EOF
         container('terraform') {
           dir('terraform') {
             sh '''
-              # Refresh state from cluster (non-destructive)
               terraform refresh \
                 -target=module.${SERVICE_NAME}.helm_release.app
             '''
@@ -93,7 +142,7 @@ EOF
       }
     }
     
-    stage('Plan Deployment') {  
+    stage('Plan Deployment') {
       steps {
         container('terraform') {
           dir('terraform') {
@@ -107,7 +156,7 @@ EOF
       }
     }
     
-    stage('Apply Changes') {  
+    stage('Apply Changes') {
       steps {
         container('terraform') {
           dir('terraform') {
@@ -122,16 +171,8 @@ EOF
         container('terraform') {
           dir('terraform') {
             sh '''
-              # Optional: Push updated state back to Git
-              # (Only if you want to track state changes)
               if [ -f terraform.tfstate ]; then
-                echo " State file updated"
-                # Uncomment below to auto-commit state
-                # git config user.email "jenkins@ci.local"
-                # git config user.name "Jenkins CI"
-                # git add terraform.tfstate
-                # git commit -m "Update terraform state [skip ci]" || true
-                # git push origin main
+                echo "✅ State file updated"
               fi
             '''
           }
@@ -143,10 +184,10 @@ EOF
       steps {
         container('kubectl') {
           sh '''
-            echo " Checking service deployment..."
+            echo "📋 Checking service deployment..."
             kubectl get pods -n ${NAMESPACE} -l app.kubernetes.io/name=${SERVICE_NAME}
             
-            echo " Waiting for rollout..."
+            echo "✅ Waiting for rollout..."
             kubectl rollout status deploy/${SERVICE_NAME}-${SERVICE_NAME} \
               -n ${NAMESPACE} --timeout=3m
           '''
@@ -157,7 +198,7 @@ EOF
   
   post {
     success {
-      echo "Deployment successful!"  
+      echo "✅ Deployment successful!"
       container('kubectl') {
         sh '''
           kubectl get deploy/${SERVICE_NAME}-${SERVICE_NAME} -n ${NAMESPACE} -o wide
@@ -165,7 +206,7 @@ EOF
       }
     }
     failure {
-      echo " Deployment failed!" 
+      echo "❌ Deployment failed!"
       container('kubectl') {
         sh '''
           echo "Debug info:"
@@ -177,7 +218,7 @@ EOF
     always {
       container('terraform') {
         dir('terraform') {
-          sh 'rm -f providers_override.tf service.tfplan || true'  
+          sh 'rm -f providers_override.tf service.tfplan || true'
         }
       }
     }
