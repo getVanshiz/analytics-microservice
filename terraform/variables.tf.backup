@@ -17,26 +17,14 @@ variable "image_repository" {
   default     = "analytics-service"
 }
 
+variable "image_tag" {
+  description = "Container image tag"
+  type        = string
+  default     = "latest"
+}
+
 variable "service_port" {
   description = "Service port for the analytics API"
   type        = number
   default     = 5000
-}
-
-variable "use_docker_hub" {
-  description = "Use Docker Hub images instead of local"
-  type        = bool
-  default     = true
-}
-
-variable "docker_username" {
-  description = "Docker Hub username/namespace"
-  type        = string
-  default     = "vanshi29"  # <— your Docker Hub username
-}
-
-variable "image_tag" {
-  description = "Image tag to deploy (e.g., short SHA from CI)"
-  type        = string
-  default     = "latest"    # override during apply
 }

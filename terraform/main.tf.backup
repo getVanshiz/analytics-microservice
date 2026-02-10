@@ -216,32 +216,29 @@ module "analytics_service" {
 
   values = {
     image = {
-      # Dynamic: uses Docker Hub if enabled, else local
-      repository = var.use_docker_hub ? "${var.docker_username}/analytics-service" : "analytics-service"
-      tag        = var.image_tag
-      pullPolicy = var.use_docker_hub ? "Always" : "Never"
+      repository = "analytics-service"
+      tag        = "v24"
+      pullPolicy = "Never"
     }
-    replicaCount = 1
-    service      = { port = 8080 }
 
     kafka = {
       bootstrapServers = module.kafka.bootstrap_dns
     }
+
     influxdb = {
-      url      = "http://${module.influxdb2.release_name}.${module.influxdb2.namespace}.svc.cluster.local"
-      org      = "team4"
-      bucket   = "analytics"
-      token    = "team4-dev-admin-token"
-      username = "admin"
-      password = "admin123"
+      url    = "http://${module.influxdb2.release_name}.${module.influxdb2.namespace}.svc.cluster.local"
+      org    = "team4"
+      bucket = "analytics"
+      token  = "team4-dev-admin-token"
     }
   }
 
   depends_on = [
-    module.influxdb2,
-    module.kafka
+    module.kafka,
+    module.influxdb2
   ]
 }
+
 # ---------------------------
 # ServiceMonitors
 # ---------------------------
