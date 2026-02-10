@@ -181,7 +181,7 @@ EOF
               echo "=========================================="
               echo "📦 Deploying new image using Git SHA"
               echo "=========================================="
-
+              git config --global --add safe.directory "*"
               # Determine Git SHA (short)
               IMAGE_SHA=$(git rev-parse --short HEAD)
               echo "Using image tag: $IMAGE_SHA"
