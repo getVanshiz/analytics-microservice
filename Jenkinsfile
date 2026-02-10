@@ -35,52 +35,7 @@ spec:
         checkout scm
       }
     }
-    
-    stage('Check CI Status') {  // ✅ New stage
-      steps {
-        container('curl') {
-          script {
-            // Get current commit SHA
-            def sha = sh(
-              script: "git rev-parse HEAD",
-              returnStdout: true
-            ).trim()
-            
-            echo "📋 Checking GitHub Actions CI status for commit: ${sha}"
-            
-            // Check CI status via GitHub API
-            def response = sh(
-              script: """
-                curl -s \
-                  -H "Accept: application/vnd.github.v3+json" \
-                  https://api.github.com/repos/${GITHUB_REPO}/commits/${sha}/status
-              """,
-              returnStdout: true
-            )
-            
-            echo "GitHub API Response: ${response}"
-            
-            // Parse JSON response
-            def jsonResponse = readJSON text: response
-            def state = jsonResponse.state
-            
-            echo "✅ GitHub Actions CI status: ${state}"
-            
-            // Check if CI passed
-            if (state == "success") {
-              echo "✅ CI passed! Proceeding with deployment..."
-            } else if (state == "pending") {
-              error("⏳ CI is still running. Wait for CI to complete before deploying.")
-            } else if (state == "failure") {
-              error("❌ CI failed! Fix tests before deploying.")
-            } else {
-              echo "⚠️  No CI status found. Proceeding anyway (assuming first build)..."
-            }
-          }
-        }
-      }
-    }
-    
+
     stage('Configure IaC Provider') {
       steps {
         container('terraform') {
