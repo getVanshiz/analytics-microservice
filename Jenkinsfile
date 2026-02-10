@@ -171,6 +171,34 @@ EOF
         }
       }
     }
+
+    stage('Deploy New Image with SHA') {
+      steps {
+        container('terraform') {
+          dir('terraform') {
+
+            sh '''
+              echo "=========================================="
+              echo "📦 Deploying new image using Git SHA"
+              echo "=========================================="
+
+              # Determine Git SHA (short)
+              IMAGE_SHA=$(git rev-parse --short HEAD)
+              echo "Using image tag: $IMAGE_SHA"
+
+              export TF_VAR_use_docker_hub=true
+              export TF_VAR_docker_username="vanshi29"
+              export TF_VAR_image_tag="$IMAGE_SHA"
+              export TF_VAR_rollout_nonce="$IMAGE_SHA"
+
+              echo "🔧 Running targeted Terraform apply..."
+              terraform apply -auto-approve \
+                -target=module.${SERVICE_NAME}.helm_release.app
+            '''
+          }
+        }
+      }
+    }
     
     stage('Refresh State') {
       steps {

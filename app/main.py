@@ -33,7 +33,7 @@ def health():
         "service": "analytics-service",
         "uptime_seconds": round(uptime, 2),
         "version": os.getenv("APP_VERSION", "0.1.0"),
-        "ci_cd_check": "manual-change-2" 
+        "ci_cd_check": "manual-change-3" 
     }), 200
 
 
