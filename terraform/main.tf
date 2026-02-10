@@ -221,6 +221,12 @@ module "analytics_service" {
       tag        = var.image_tag
       pullPolicy = var.use_docker_hub ? "Always" : "Never"
     }
+
+
+    podAnnotations = {
+        "rollout.nonce" = var.rollout_nonce
+    }
+
     replicaCount = 1
     service      = { port = 8080 }
 

@@ -40,3 +40,9 @@ variable "image_tag" {
   type        = string
   default     = "latest"    # override during apply
 }
+
+variable "rollout_nonce" {
+  description = "Forcing a rollout even if values are the same"
+  type        = string
+  default     = ""
+}
