@@ -25,11 +25,12 @@ spec:
   
   environment {
     NAMESPACE = "team4"
-    SERVICE_NAME = "analytics-service"
+    SERVICE_NAME = "analytics-service"  
+    MODULE_NAME = "analytics_service"   
     GITHUB_REPO = "vanshiz-os/analytics-microservice"
     DOCKER_USERNAME = "vanshi29"
   }
-  
+    
   stages {
     stage('Checkout') {
       steps {
@@ -194,17 +195,18 @@ EOF
               echo "  - docker_username: ${DOCKER_USERNAME}"
               echo "  - image_tag: ${IMAGE_SHA}"
               echo "  - rollout_nonce: ${IMAGE_SHA}"
+              echo "  - module_name: ${MODULE_NAME}"
               
               terraform plan \
                 -target=kubernetes_secret.influxdb_auth \
-                -target=module.${SERVICE_NAME}.helm_release.app \
+                -target=module.${MODULE_NAME}.helm_release.app \
                 -out=deployment.tfplan
             '''
           }
         }
       }
     }
-    
+        
     stage('Apply Deployment') {
       steps {
         container('terraform') {
