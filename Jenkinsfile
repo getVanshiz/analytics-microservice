@@ -131,6 +131,58 @@ spec:
       }
     }
 
+    stage('Deploy Test Environment') {
+      steps {
+        container('terraform') {
+          sh '''
+            echo "=========================================="
+            echo "🧪 Deploying Integration Test Environment"
+            echo "=========================================="
+            
+            chmod +x scripts/deploy-test-env.sh
+            ./scripts/deploy-test-env.sh ${IMAGE_SHA}
+          '''
+        }
+      }
+    }
+
+    stage('Run Integration Tests') {
+      steps {
+        container('kubectl') {
+          sh '''
+            echo "=========================================="
+            echo "🧪 Running Integration Tests"
+            echo "=========================================="
+            
+            # Install Python and dependencies
+            apk add --no-cache python3 py3-pip
+            
+            chmod +x scripts/run-integration-tests.sh
+            ./scripts/run-integration-tests.sh
+          '''
+        }
+      }
+    }
+
+    stage('Verify Test Results') {
+      steps {
+        container('kubectl') {
+          sh '''
+            echo "=========================================="
+            echo "📊 Test Results Summary"
+            echo "=========================================="
+            
+            if [ -f test-results.xml ]; then
+              echo "✅ Integration tests completed"
+              cat test-results.xml | grep -E "tests=|failures=|errors=" || true
+            else
+              echo "⚠️  No test results file found"
+            fi
+          '''
+        }
+      }
+    }
+
     stage('Configure IaC Provider') {
       steps {
         container('terraform') {
@@ -326,6 +378,16 @@ EOF
           echo "=========================================="
           echo "🔍 Debug Information"
           echo "=========================================="
+          
+          # Show test environment logs if they exist
+          echo "Test environment pods:"
+          kubectl get pods -n analytics-test || true
+          echo ""
+          echo "Test service logs:"
+          kubectl logs -n analytics-test -l app=analytics-service --tail=100 || true
+          echo ""
+          
+          # Show production deployment info
           echo "Deployment description:"
           kubectl describe deployment/${SERVICE_NAME}-${SERVICE_NAME} -n ${NAMESPACE} || true
           echo ""
@@ -340,9 +402,17 @@ EOF
     
     always {
       container('terraform') {
-        dir('terraform') {
-          sh 'rm -f providers_override.tf deployment.tfplan || true'
-        }
+        sh '''
+          echo "🧹 Cleaning up test environment..."
+          chmod +x scripts/cleanup-test-env.sh
+          ./scripts/cleanup-test-env.sh || true
+          
+          echo "🧹 Cleaning up terraform files..."
+          cd terraform
+          rm -f providers_override.tf deployment.tfplan || true
+          cd ../terraform-test
+          rm -f providers_override.tf test.tfplan || true
+        '''
       }
     }
   }
