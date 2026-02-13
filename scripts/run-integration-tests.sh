@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/sh
 # Run integration tests against test environment
 # This script executes pytest integration tests with proper configuration
 
@@ -22,7 +22,7 @@ export KAFKA_BOOTSTRAP=$(terraform output -raw kafka_bootstrap 2>/dev/null || ec
 export INFLUX_URL=$(terraform output -raw influxdb_url 2>/dev/null || echo "http://influxdb2.team4.svc.cluster.local")
 export INFLUX_TOKEN="team4-dev-admin-token"
 export INFLUX_ORG="team4"
-export INFLUX_BUCKET="analytics-test"
+export INFLUX_BUCKET="analytics"  # Use production bucket (read-only)
 
 cd ..
 
@@ -60,4 +60,3 @@ fi
 echo "=========================================="
 
 exit $TEST_EXIT_CODE
-
