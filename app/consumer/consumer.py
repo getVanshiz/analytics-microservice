@@ -253,13 +253,10 @@ def start_consumer():
                                     event_type=norm["event_name"],
                                     source_team=norm["source_team"],
                                     latency_ms=latency_ms,
-                                    lag=0,  # via exporter if you have one
+                                    lag=0,  # via exporter 
                                     ts_ms=consumed_ts_ms,
                                 )
 
-                            # Optional analytics publish:
-                            # ✅ removed wrapper span "kafka.produce.analytics" to avoid duplicate produce spans in Jaeger.
-                            # publish_analytics() already creates "kafka.produce" span and injects headers.
                             if ENABLE_ANALYTICS:
                                 publish_analytics(
                                     topic=topic,
