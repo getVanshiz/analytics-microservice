@@ -9,11 +9,11 @@ output "analytics_service_url" {
 }
 
 output "kafka_bootstrap" {
-  description = "Kafka bootstrap servers for tests"
-  value       = "${helm_release.test_kafka.name}.${kubernetes_namespace_v1.test.metadata[0].name}.svc.cluster.local:9092"
+  description = "Kafka bootstrap servers (existing from team4)"
+  value       = "team4-kafka-kafka-bootstrap.team4.svc.cluster.local:9092"
 }
 
 output "influxdb_url" {
-  description = "InfluxDB URL for tests"
-  value       = "http://${helm_release.test_influxdb.name}.${kubernetes_namespace_v1.test.metadata[0].name}.svc.cluster.local"
+  description = "InfluxDB URL (existing from team4)"
+  value       = "http://influxdb2.team4.svc.cluster.local"
 }

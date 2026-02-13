@@ -6,10 +6,6 @@ terraform {
       source  = "hashicorp/kubernetes"
       version = "~> 2.23"
     }
-    helm = {
-      source  = "hashicorp/helm"
-      version = "~> 2.11"
-    }
   }
 }
 
@@ -40,117 +36,18 @@ resource "kubernetes_resource_quota_v1" "test_quota" {
 
   spec {
     hard = {
-      "requests.cpu"    = "2"
-      "requests.memory" = "4Gi"
-      "limits.cpu"      = "4"
-      "limits.memory"   = "8Gi"
-      pods              = "20"
+      "requests.cpu"    = "1"
+      "requests.memory" = "2Gi"
+      "limits.cpu"      = "2"
+      "limits.memory"   = "4Gi"
+      pods              = "10"
     }
   }
 }
 
 # ---------------------------
-# Test Kafka (Lightweight)
-# ---------------------------
-
-resource "helm_release" "test_kafka" {
-  name       = "test-kafka"
-  repository = "https://charts.bitnami.com/bitnami"
-  chart      = "kafka"
-  version    = "26.4.2"
-  namespace  = kubernetes_namespace_v1.test.metadata[0].name
-
-  values = [
-    yamlencode({
-      # Minimal single-node Kafka for testing
-      replicaCount = 1
-      
-      kraft = {
-        enabled = true
-      }
-      
-      controller = {
-        replicaCount = 1
-      }
-      
-      broker = {
-        replicaCount = 1
-      }
-      
-      listeners = {
-        client = {
-          protocol = "PLAINTEXT"
-        }
-      }
-      
-      persistence = {
-        enabled = false  # Ephemeral for tests
-      }
-      
-      resources = {
-        requests = {
-          cpu    = "250m"
-          memory = "512Mi"
-        }
-        limits = {
-          cpu    = "500m"
-          memory = "1Gi"
-        }
-      }
-    })
-  ]
-
-  depends_on = [kubernetes_namespace_v1.test]
-}
-
-# ---------------------------
-# Test InfluxDB (Lightweight)
-# ---------------------------
-
-resource "helm_release" "test_influxdb" {
-  name       = "test-influxdb"
-  repository = "https://helm.influxdata.com/"
-  chart      = "influxdb2"
-  version    = "2.1.1"
-  namespace  = kubernetes_namespace_v1.test.metadata[0].name
-
-  values = [
-    yamlencode({
-      # Minimal InfluxDB for testing
-      persistence = {
-        enabled = false  # Ephemeral for tests
-      }
-      
-      adminUser = {
-        user         = "admin"
-        password     = "testpass123"
-        token        = "test-token"
-        organization = "test-org"
-        bucket       = "analytics-test"
-      }
-      
-      service = {
-        type = "ClusterIP"
-      }
-      
-      resources = {
-        requests = {
-          cpu    = "250m"
-          memory = "512Mi"
-        }
-        limits = {
-          cpu    = "500m"
-          memory = "1Gi"
-        }
-      }
-    })
-  ]
-
-  depends_on = [kubernetes_namespace_v1.test]
-}
-
-# ---------------------------
 # Analytics Service Test Deployment
+# Uses existing Kafka and InfluxDB from team4 namespace
 # ---------------------------
 
 resource "kubernetes_config_map_v1" "analytics_test_config" {
@@ -160,20 +57,27 @@ resource "kubernetes_config_map_v1" "analytics_test_config" {
   }
 
   data = {
-    KAFKA_BOOTSTRAP             = "${helm_release.test_kafka.name}.${kubernetes_namespace_v1.test.metadata[0].name}.svc.cluster.local:9092"
-    INFLUX_URL                  = "http://${helm_release.test_influxdb.name}.${kubernetes_namespace_v1.test.metadata[0].name}.svc.cluster.local"
-    INFLUX_ORG                  = "test-org"
-    INFLUX_BUCKET               = "analytics-test"
-    INFLUX_TOKEN                = "test-token"
+    # Kafka - reuse existing from team4
+    KAFKA_BOOTSTRAP = "team4-kafka-kafka-bootstrap.team4.svc.cluster.local:9092"
+    
+    # InfluxDB - reuse existing from team4 with test bucket
+    INFLUX_URL    = "http://influxdb2.team4.svc.cluster.local"
+    INFLUX_ORG    = "team4"
+    INFLUX_BUCKET = "analytics-test"  # Separate test bucket
+    INFLUX_TOKEN  = "team4-dev-admin-token"
+    
+    # OpenTelemetry
     OTEL_SERVICE_NAME           = "analytics-service-test"
     OTEL_EXPORTER_OTLP_ENDPOINT = "http://otel-collector.monitoring.svc.cluster.local:4317"
     OTEL_EXPORTER_OTLP_INSECURE = "true"
-    APP_VERSION                 = var.image_tag
-    PORT                        = "8080"
-    INPUT_TOPICS                = "user-events,order-events,notification-events"
-    ANALYTICS_TOPIC             = "analytics-events"
-    CONSUMER_GROUP              = "test-analytics-group"
-    ENABLE_ANALYTICS_TOPIC      = "true"
+    
+    # App Config
+    APP_VERSION             = var.image_tag
+    PORT                    = "8080"
+    INPUT_TOPICS            = "test-user-events,test-order-events,test-notification-events"
+    ANALYTICS_TOPIC         = "test-analytics-events"
+    CONSUMER_GROUP          = "test-analytics-group"
+    ENABLE_ANALYTICS_TOPIC  = "true"
   }
 }
 
@@ -238,7 +142,7 @@ resource "kubernetes_deployment_v1" "analytics_test" {
               path = "/health"
               port = 8080
             }
-            initial_delay_seconds = 15
+            initial_delay_seconds = 10
             period_seconds        = 10
           }
 
@@ -247,18 +151,13 @@ resource "kubernetes_deployment_v1" "analytics_test" {
               path = "/health"
               port = 8080
             }
-            initial_delay_seconds = 10
+            initial_delay_seconds = 5
             period_seconds        = 5
           }
         }
       }
     }
   }
-
-  depends_on = [
-    helm_release.test_kafka,
-    helm_release.test_influxdb
-  ]
 }
 
 resource "kubernetes_service_v1" "analytics_test" {
@@ -287,3 +186,5 @@ resource "kubernetes_service_v1" "analytics_test" {
     }
   }
 }
+
+
