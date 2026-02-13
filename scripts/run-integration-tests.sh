@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 # Run integration tests against test environment
 # This script executes pytest integration tests with proper configuration
 
@@ -18,10 +18,10 @@ fi
 
 # Get service endpoints from Terraform outputs
 export ANALYTICS_URL=$(terraform output -raw analytics_service_url 2>/dev/null || echo "http://analytics-service-test.analytics-test.svc.cluster.local:8080")
-export KAFKA_BOOTSTRAP=$(terraform output -raw kafka_bootstrap 2>/dev/null || echo "test-kafka.analytics-test.svc.cluster.local:9092")
-export INFLUX_URL=$(terraform output -raw influxdb_url 2>/dev/null || echo "http://test-influxdb.analytics-test.svc.cluster.local")
-export INFLUX_TOKEN="test-token"
-export INFLUX_ORG="test-org"
+export KAFKA_BOOTSTRAP=$(terraform output -raw kafka_bootstrap 2>/dev/null || echo "team4-kafka-kafka-bootstrap.team4.svc.cluster.local:9092")
+export INFLUX_URL=$(terraform output -raw influxdb_url 2>/dev/null || echo "http://influxdb2.team4.svc.cluster.local")
+export INFLUX_TOKEN="team4-dev-admin-token"
+export INFLUX_ORG="team4"
 export INFLUX_BUCKET="analytics-test"
 
 cd ..
@@ -55,11 +55,9 @@ if [ $TEST_EXIT_CODE -eq 0 ]; then
   echo "✅ Integration tests PASSED!"
 else
   echo "❌ Integration tests FAILED!"
-  echo ""
-  echo "📝 Debugging information:"
-  echo "Analytics service logs:"
-  kubectl logs -n analytics-test -l app=analytics-service --tail=50 || true
+  echo "Check test-results.xml and test-report.html for details"
 fi
 echo "=========================================="
 
 exit $TEST_EXIT_CODE
+
