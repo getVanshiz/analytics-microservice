@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/sh
 # Cleanup test environment
 # This script destroys all test infrastructure
 

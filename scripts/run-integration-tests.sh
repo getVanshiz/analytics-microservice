@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/sh
 # Run integration tests against test environment
 # This script executes pytest integration tests with proper configuration
 

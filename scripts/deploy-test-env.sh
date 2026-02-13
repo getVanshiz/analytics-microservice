@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/sh
 # Deploy test environment using Terraform
 # This script deploys isolated Kafka, InfluxDB, and analytics service
 
