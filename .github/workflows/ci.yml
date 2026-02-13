@@ -36,19 +36,19 @@ jobs:
       
       - name: Run unit tests
         run: |
-          pytest tests/unit/ -v -m unit --tb=short
+          pytest tests/unit/ -v --tb=short
       
-      - name: Run integration tests
+      - name: Run mocked integration tests
         run: |
-          pytest tests/integration/ -v -m integration --tb=short
+          pytest tests/integration/test_integration.py -v --tb=short
       
-      - name: Run all tests with coverage
+      - name: Run all tests with coverage (excluding real integration tests)
         run: |
-          pytest tests/ -v --cov=app --cov-config=.coveragerc --cov-report=term --cov-report=xml --cov-report=html
+          pytest tests/unit/ tests/integration/test_integration.py -v --cov=app --cov-config=.coveragerc --cov-report=term --cov-report=xml --cov-report=html
       
       - name: Check coverage threshold
         run: |
-          pytest tests/ --cov=app --cov-config=.coveragerc --cov-fail-under=70
+          pytest tests/unit/ tests/integration/test_integration.py --cov=app --cov-config=.coveragerc --cov-fail-under=70
       
       - name: Upload coverage report
         uses: actions/upload-artifact@v4
