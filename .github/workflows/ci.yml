@@ -22,7 +22,7 @@ jobs:
           python-version: '3.11'
       
       - name: Cache pip dependencies
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: ~/.cache/pip
           key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements-test.txt') }}
@@ -51,14 +51,14 @@ jobs:
           pytest tests/ --cov=app --cov-fail-under=70
       
       - name: Upload coverage report
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         if: always()
         with:
           name: coverage-report
           path: htmlcov/
       
       - name: Upload coverage to artifacts
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         if: always()
         with:
           name: coverage-xml
@@ -106,4 +106,3 @@ jobs:
       
       - name: Image digest
         run: echo "Image pushed with SHA tag ${{ steps.prep.outputs.sha }}"
-
