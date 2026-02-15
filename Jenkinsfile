@@ -67,7 +67,7 @@ spec:
               while [ $ATTEMPTS -lt $MAX_ATTEMPTS ]; do
                 ATTEMPTS=$((ATTEMPTS+1))
                 
-                RESPONSE="$(curl -s \
+                RESPONSE="$(curl -s -L \
                   -H "Accept: application/vnd.github+json" \
                   -H "Authorization: Bearer ${GITHUB_TOKEN}" \
                   "${API}/repos/${REPO}/commits/${COMMIT_SHA}/check-runs")"
