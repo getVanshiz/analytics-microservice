@@ -37,6 +37,31 @@ from consumer.metrics import (
 )
 from consumer.cache import TTLDict, TTLSet
 
+# --- NEW: try to import unique-order counters from metrics; fallback to local defs ---
+try:
+    from consumer.metrics import (
+        analytics_unique_orders_created_total,
+        analytics_unique_orders_confirmed_total,
+        analytics_unique_orders_shipped_total,
+    )
+except Exception:
+    # Safe local fallback so you can run immediately even if metrics.py
+    # isn't updated yet. (Later you can move these into consumer/metrics.py)
+    from prometheus_client import Counter
+
+    analytics_unique_orders_created_total = Counter(
+        "analytics_unique_orders_created_total",
+        "Unique orders that reached CREATED at least once (per-process lifetime)"
+    )
+    analytics_unique_orders_confirmed_total = Counter(
+        "analytics_unique_orders_confirmed_total",
+        "Unique orders that reached CONFIRMED at least once (per-process lifetime)"
+    )
+    analytics_unique_orders_shipped_total = Counter(
+        "analytics_unique_orders_shipped_total",
+        "Unique orders that reached SHIPPED at least once (per-process lifetime)"
+    )
+
 log = logging.getLogger("analytics-consumer")
 
 BOOTSTRAP = os.getenv("KAFKA_BOOTSTRAP", "team4-kafka-kafka-bootstrap.team4.svc:9092")
@@ -49,9 +74,12 @@ GROUP_ID = os.getenv("CONSUMER_GROUP", "analytics-consumer-group")
 ENABLE_ANALYTICS = (os.getenv("ENABLE_ANALYTICS_TOPIC", "false").lower() == "true")
 
 # Correlation & window settings
-ORDER_STATE_TTL_SEC = int(os.getenv("ORDER_STATE_TTL_SEC", "7200"))  # 2h
-USER_STATE_TTL_SEC = int(os.getenv("USER_STATE_TTL_SEC", "86400"))   # 24h
+ORDER_STATE_TTL_SEC = int(os.getenv("ORDER_STATE_TTL_SEC", "7200"))   # 2h
+USER_STATE_TTL_SEC = int(os.getenv("USER_STATE_TTL_SEC", "86400"))    # 24h
 ORDERING_USERS_WINDOW_SEC = int(os.getenv("ORDERING_USERS_WINDOW_SEC", "3600"))  # 1h approx unique
+
+# Lifetime-ish TTL for unique-order sets (10 years in seconds)
+UNIQUE_LIFETIME_TTL_SEC = int(os.getenv("UNIQUE_LIFETIME_TTL_SEC", str(10 * 365 * 24 * 3600)))
 
 IST = timezone(timedelta(hours=5, minutes=30))
 
@@ -63,7 +91,7 @@ _user_created_ts = TTLDict(ttl_seconds=USER_STATE_TTL_SEC, max_size=500_000)
 # user_id -> last_known_status (UPPERCASE)
 _user_status = TTLDict(ttl_seconds=USER_STATE_TTL_SEC, max_size=500_000)
 
-# user_id observed first order? (long TTL to avoid double counting; or use USER_STATE_TTL_SEC)
+# user_id observed first order? (long TTL to avoid double counting)
 _first_order_seen_users = TTLSet(ttl_seconds=7 * 24 * 3600, max_size=1_000_000)
 
 # order_id -> { "user_id", "created_ts_ms", "confirmed_ts_ms", "shipped_ts_ms" }
@@ -75,9 +103,16 @@ _first_notification_seen_orders = TTLSet(ttl_seconds=ORDER_STATE_TTL_SEC, max_si
 # approx unique ordering users in the last window
 _ordering_users_window = TTLSet(ttl_seconds=ORDERING_USERS_WINDOW_SEC, max_size=1_000_000)
 
-# per-user last known order stage timestamps (fallback when order_id missing)
+# per-user stage timestamps for fallback correlation
 # user_id -> { "created_ts_ms", "confirmed_ts_ms", "shipped_ts_ms" }
 _user_stage_ts = TTLDict(ttl_seconds=ORDER_STATE_TTL_SEC, max_size=1_000_000)
+
+# ------------------- NEW: Unique-order funnel de-dup sets -------------------
+# Once an orderId enters a stage, we never increment that stage again (per process).
+# We also "backfill" earlier stages if a later stage arrives first. (See _handle_order_event)
+_unique_created_orders   = TTLSet(ttl_seconds=UNIQUE_LIFETIME_TTL_SEC, max_size=5_000_000)
+_unique_confirmed_orders = TTLSet(ttl_seconds=UNIQUE_LIFETIME_TTL_SEC, max_size=5_000_000)
+_unique_shipped_orders   = TTLSet(ttl_seconds=UNIQUE_LIFETIME_TTL_SEC, max_size=5_000_000)
 
 
 class KafkaHeadersGetter:
@@ -90,12 +125,9 @@ class KafkaHeadersGetter:
         if not carrier:
             return []
         values = []
-        for k, v in carrier:
+        for k, v in (carrier or []):
             if k == key and v is not None:
-                if isinstance(v, bytes):
-                    values.append(v.decode("utf-8"))
-                else:
-                    values.append(str(v))
+                values.append(v.decode("utf-8") if isinstance(v, bytes) else str(v))
         return values
 
     def keys(self, carrier):
@@ -216,7 +248,6 @@ def start_consumer():
             log.error("kafka connection failed, retrying", exc_info=True, extra={"extra_fields": {"bootstrap": BOOTSTRAP}})
             time.sleep(2)
 
-    # ---------- Main consume loop ----------
     while True:
         try:
             records = consumer.poll(timeout_ms=1000)
@@ -231,7 +262,6 @@ def start_consumer():
                     topic = message.topic
                     value = message.value or {}
 
-                    # NEW: Update stream liveness as soon as a message arrives for this topic
                     analytics_topic_last_seen_seconds.labels(topic=topic).set(time.time())
 
                     produced_ts_ms = parse_event_time_ms(topic, value)
@@ -332,8 +362,6 @@ def start_consumer():
             time.sleep(1)
 
 
-# ------------------- Business Handlers -------------------
-
 def _handle_user_event(value: dict, event_ts_ms: int) -> None:
     user_id = value.get("user_id")
     if user_id is None:
@@ -372,8 +400,38 @@ def _handle_order_event(value: dict, event_ts_ms: int) -> None:
     user_id = value.get("user_id")
     status = _order_status_lower(value.get("status"))
 
+    # Existing event counter (keep)
     analytics_orders_total.labels(status=status).inc()
 
+    # ---------- NEW: Unique order funnel ----------
+    if order_id is not None:
+        if status == "created":
+            if not _unique_created_orders.contains(order_id):
+                _unique_created_orders.add(order_id)
+                analytics_unique_orders_created_total.inc()
+
+        elif status == "confirmed":
+            # backfill created if missing
+            if not _unique_created_orders.contains(order_id):
+                _unique_created_orders.add(order_id)
+                analytics_unique_orders_created_total.inc()
+            if not _unique_confirmed_orders.contains(order_id):
+                _unique_confirmed_orders.add(order_id)
+                analytics_unique_orders_confirmed_total.inc()
+
+        elif status == "shipped":
+            # backfill both created and confirmed if missing
+            if not _unique_created_orders.contains(order_id):
+                _unique_created_orders.add(order_id)
+                analytics_unique_orders_created_total.inc()
+            if not _unique_confirmed_orders.contains(order_id):
+                _unique_confirmed_orders.add(order_id)
+                analytics_unique_orders_confirmed_total.inc()
+            if not _unique_shipped_orders.contains(order_id):
+                _unique_shipped_orders.add(order_id)
+                analytics_unique_orders_shipped_total.inc()
+
+    # ---------- Existing latency/KPIs ----------
     if status == "created" and user_id is not None:
         _ordering_users_window.add(user_id)
         analytics_ordering_users_approx_total.set(_ordering_users_window.size())

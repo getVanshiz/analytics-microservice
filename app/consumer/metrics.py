@@ -63,11 +63,25 @@ analytics_event_end_to_end_latency_ms = Histogram(
 # =========================
 
 # ---- Orders ----
-# Count of orders by status (created/confirmed/shipped/cancelled/unknown)
+# Event-count of orders by status (created/confirmed/shipped/cancelled/unknown)
 analytics_orders_total = Counter(
     "analytics_orders_total",
     "Count of orders observed by Analytics, partitioned by order status",
     ["status"]  # created|confirmed|shipped|cancelled|unknown
+)
+
+# 🚀 NEW: Unique-order funnel counters (no labels; incremented once per unique order_id in consumer)
+analytics_unique_orders_created_total = Counter(
+    "analytics_unique_orders_created_total",
+    "Unique orders that reached CREATED at least once (monotonic, per-process)"
+)
+analytics_unique_orders_confirmed_total = Counter(
+    "analytics_unique_orders_confirmed_total",
+    "Unique orders that reached CONFIRMED at least once (monotonic, per-process)"
+)
+analytics_unique_orders_shipped_total = Counter(
+    "analytics_unique_orders_shipped_total",
+    "Unique orders that reached SHIPPED at least once (monotonic, per-process)"
 )
 
 # Order-stage -> notification latency (e.g., confirmed -> notif, shipped -> notif)
@@ -136,6 +150,7 @@ analytics_user_to_first_notification_latency_ms = Histogram(
     buckets=(1000, 5000, 15000, 30000, 60000, 120000, 300000, 600000)
 )
 
+# Stream liveness (topic heartbeat)
 analytics_topic_last_seen_seconds = Gauge(
     "analytics_topic_last_seen_seconds",
     "Unix timestamp when this topic was last seen",
